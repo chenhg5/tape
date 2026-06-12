@@ -53,11 +53,11 @@ func banner(app *App, version string) string {
 		},
 	}
 	// Brand-aligned 256-color palette, one per letter:
-	//   T → 173  Anthropic Crail Orange  (#d7875f ≈ #d97757)
-	//   A → 141  Codex dreamy violet     (#af87ff)
-	//   P → 250  Cursor geek gray        (#bcbcbc)
-	//   E → 230  Tape cream              (#ffffd7)
-	colors := []int{173, 141, 250, 230}
+	//   T → 173  Anthropic Crail orange   (#d7875f ≈ #d97757)
+	//   A → 105  Codex dreamy periwinkle  (#8787ff ≈ #808fef)
+	//   P → 250  Cursor geek gray         (#bcbcbc)
+	//   E → 230  Tape cream               (#ffffd7)
+	colors := []int{173, 105, 250, 230}
 
 	var b strings.Builder
 	for row := 0; row < 6; row++ {

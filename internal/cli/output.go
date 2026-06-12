@@ -53,14 +53,14 @@ func (a *App) brand(xterm256 int, s string) string {
 // own visual identity, so rows group visually:
 //
 //	claude-code → xterm 173  warm crail orange     (Anthropic)
-//	codex       → xterm 141  dreamy violet         (Codex / GPT-5 vibe)
+//	codex       → xterm 105  dreamy periwinkle     (≈ #808fef)
 //	cursor      → xterm 250  geek gray             (Cursor's monochrome IDE feel)
 func (a *App) agentColor(agent string) string {
 	switch agent {
 	case "claude-code":
 		return a.brand(173, agent)
 	case "codex":
-		return a.brand(141, agent)
+		return a.brand(105, agent)
 	case "cursor":
 		return a.brand(250, agent)
 	default:

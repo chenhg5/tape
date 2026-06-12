@@ -44,6 +44,33 @@ const exitCodeHelp = `Exit codes:
   3  no results / not found
   10 dry run succeeded (safe to run without --dry-run)`
 
+// usageTemplate mirrors cobra's default but moves Examples after Flags so
+// help reads top-down as: synopsis → structure → worked examples.
+const usageTemplate = `Usage:{{if .Runnable}}
+  {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
+  {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
+
+Aliases:
+  {{.NameAndAliases}}{{end}}{{if .HasAvailableSubCommands}}
+
+Available Commands:{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+
+Flags:
+{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+
+Global Flags:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasHelpSubCommands}}
+
+Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
+  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasExample}}
+
+Examples:
+{{.Example}}{{end}}{{if .HasAvailableSubCommands}}
+
+Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
+`
+
 type App struct {
 	Sources []ports.Source
 	// SourceFactory builds the source set for any home directory; used to
@@ -86,9 +113,7 @@ func Execute(app *App) int {
 		Use:   "tape",
 		Short: "Record, search and replay your AI coding sessions",
 		Long: `Tape archives sessions from Claude Code, Codex and Cursor into one place
-you own. Output is human-readable on a TTY and JSON when piped (or with --json).
-
-` + exitCodeHelp,
+you own. Output is human-readable on a TTY and JSON when piped (or with --json).`,
 		Example: `  tape sync                          archive new sessions from all agents
   tape search "为什么不用 oauth2"      full-text search, CJK supported
   tape restore codex/019ea0af --to claude-code`,
@@ -96,14 +121,24 @@ you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// Custom usage template: Examples are pushed below Commands+Flags so
+	// the structural sections come first and the worked examples sit
+	// right above the prompt — easier to skim, easier to copy/paste from.
+	root.SetUsageTemplate(usageTemplate)
+
 	// Show the splash banner on top-level --help / -h, then delegate to
-	// cobra's default renderer. Subcommand help is untouched.
+	// cobra's default renderer, and append Exit codes after everything
+	// else. Subcommand help is untouched (no banner, no exit-code block).
 	defaultHelp := root.HelpFunc()
 	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		if cmd == root && !app.useJSON() {
 			fmt.Fprintln(os.Stdout, banner(app, app.Version))
 		}
 		defaultHelp(cmd, args)
+		if cmd == root {
+			fmt.Fprintln(os.Stdout)
+			fmt.Fprintln(os.Stdout, exitCodeHelp)
+		}
 	})
 	// flag parsing problems are usage errors (exit 2), not runtime errors
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
