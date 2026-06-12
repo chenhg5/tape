@@ -177,7 +177,7 @@ func newBackupScanCmd(app *App) *cobra.Command {
 					Message: fmt.Sprintf("%d potential secret(s) found", len(findings))}
 			}
 			if len(findings) == 0 {
-				fmt.Println("no secrets found")
+				fmt.Printf("%s %s\n", app.green("✓"), "no secrets found")
 				return nil
 			}
 			printFindings(app, findings)
@@ -220,8 +220,15 @@ func printFindings(app *App, findings []redact.Finding) {
 	if app.useJSON() {
 		return // findings travel inside the JSON error / result payloads
 	}
+	fmt.Fprintf(os.Stderr, "%s %s\n",
+		app.red("!"),
+		app.bold(fmt.Sprintf("%d potential secret(s) found:", len(findings))))
 	for _, f := range findings {
-		fmt.Fprintf(os.Stderr, "  %s %s:%d %s\n", app.yellow(f.Rule), f.Path, f.Line, f.Preview)
+		fmt.Fprintf(os.Stderr, "  %s %s:%d  %s\n",
+			app.yellow(padRightDisp(f.Rule, 18)),
+			app.cyan(f.Path),
+			f.Line,
+			app.gray(truncDisp(collapseWhitespace(f.Preview), 60)))
 	}
 }
 
@@ -233,12 +240,17 @@ func printResult(app *App, res *ports.BackupResult, findings []redact.Finding) e
 		}
 		return emitJSON(payload)
 	}
-	fmt.Printf("%s %s: %d file(s)", res.Target, res.Action, res.Changed)
+	verb := app.bold(fmt.Sprintf("%d file(s)", res.Changed))
+	fmt.Printf("%s %s %s  %s",
+		app.green("✓"),
+		app.cyan(res.Target),
+		res.Action,
+		verb)
 	if res.Ref != "" {
-		fmt.Printf(" @ %s", res.Ref)
+		fmt.Printf("  %s", app.gray("@ "+res.Ref))
 	}
 	if res.Note != "" {
-		fmt.Printf(" (%s)", res.Note)
+		fmt.Printf("\n  %s", app.gray(res.Note))
 	}
 	fmt.Println()
 	return nil

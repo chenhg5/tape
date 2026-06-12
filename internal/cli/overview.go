@@ -145,8 +145,11 @@ func renderOverview(app *App, st overviewStats) {
 		}
 	}
 	for _, a := range st.Agents {
-		fmt.Printf("  %-12s %s %4d   %s\n",
-			a.Agent,
+		name := padRightDisp(a.Agent, 12)
+		// re-color only the agent name portion; padding stays plain
+		colored := app.agentColor(a.Agent) + name[len(a.Agent):]
+		fmt.Printf("  %s %s %4d   %s\n",
+			colored,
 			app.cyan(bar(a.Sessions, maxSessions, 20)),
 			a.Sessions,
 			app.gray(relTime(a.LastActivity)))
@@ -169,8 +172,7 @@ func renderOverview(app *App, st overviewStats) {
 
 	fmt.Printf("\n%s\n", app.gray("TOP PROJECTS"))
 	for _, p := range st.TopProjects {
-		// truncate to 39 so the ellipsis still fits the 40-column field
-		fmt.Printf("  %s %4d\n", padRight(truncate(p.Project, 39), 40), p.Sessions)
+		fmt.Printf("  %s %4d\n", padRightDisp(truncDisp(p.Project, 40), 40), p.Sessions)
 	}
 
 	fmt.Printf("\n%s\n", app.gray("RECENT"))
@@ -179,24 +181,14 @@ func renderOverview(app *App, st overviewStats) {
 		if title == "" {
 			title = s.Project
 		}
+		id := padRightDisp(shortID(s.ID), 22)
 		fmt.Printf("  %s %s %s\n",
-			app.cyan(padRight(shortID(s.ID), 22)), padRight(relTime(s.UpdatedAt), 8), truncate(title, 48))
+			app.cyan(shortID(s.ID))+id[len(shortID(s.ID)):],
+			padRightDisp(relTime(s.UpdatedAt), 8),
+			truncDisp(title, 48))
 	}
 
 	fmt.Printf("\n%s\n", app.gray(`tip: tape search "<keyword>" · tape show <id> · tape restore <id> --to <agent>`))
-}
-
-// padRight pads s with spaces to n display columns, counting runes (not
-// bytes) so truncated/multibyte strings keep columns aligned.
-func padRight(s string, n int) string {
-	w := 0
-	for range s {
-		w++
-	}
-	if w >= n {
-		return s
-	}
-	return s + strings.Repeat(" ", n-w)
 }
 
 // bar renders a filled/empty proportion like ████████░░░░.

@@ -10,6 +10,61 @@ import (
 	"github.com/chenhg5/tape/internal/remote"
 )
 
+// renderSyncReport prints one row per scanned source, then a colored
+// summary line. Layout:
+//
+//	✓ claude-code         scanned 38   archived  0   skipped 38
+//	✓ codex@build-server  scanned 13   archived  1   skipped 12
+//	· cursor              not installed
+//
+// The leading glyph reflects status: ✓ ok, ! errors, · skipped/missing.
+func renderSyncReport(app *App, report service.SyncReport) {
+	for _, s := range report.Sources {
+		label := s.Agent
+		if s.Host != "" {
+			label = s.Agent + "@" + s.Host
+		}
+		labelW := 22
+		labelCol := padRightDisp(label, labelW)
+		colored := app.agentColor(s.Agent) + labelCol[len(s.Agent):]
+
+		if !s.Found {
+			fmt.Printf("  %s %s %s\n",
+				app.gray("·"), colored, app.gray("not installed"))
+			continue
+		}
+		mark := app.green("✓")
+		if len(s.Errors) > 0 {
+			mark = app.red("!")
+		} else if s.Archived == 0 && s.Scanned == 0 {
+			mark = app.gray("·")
+		}
+		archivedCell := padRightDisp(fmt.Sprintf("%d", s.Archived), 4)
+		if s.Archived > 0 {
+			archivedCell = app.bold(app.green(fmt.Sprintf("%d", s.Archived))) + archivedCell[len(fmt.Sprintf("%d", s.Archived)):]
+		}
+		fmt.Printf("  %s %s  %s %s   %s %s   %s %s\n",
+			mark, colored,
+			app.gray("scanned"), padRightDisp(fmt.Sprintf("%d", s.Scanned), 4),
+			app.gray("archived"), archivedCell,
+			app.gray("skipped"), padRightDisp(fmt.Sprintf("%d", s.Skipped), 4))
+		for _, e := range s.Errors {
+			fmt.Fprintf(os.Stderr, "    %s %s\n", app.red("!"), e)
+		}
+	}
+	a, sk := report.Archived(), report.Skipped()
+	switch {
+	case a > 0:
+		fmt.Printf("\n%s %s\n",
+			app.green("✓"),
+			app.bold(fmt.Sprintf("%d new session(s) archived", a)))
+	case sk > 0:
+		fmt.Printf("\n%s %s\n", app.gray("·"), app.gray("nothing new"))
+	default:
+		fmt.Printf("\n%s %s\n", app.gray("·"), app.gray("no agent data found"))
+	}
+}
+
 func newSyncCmd(app *App) *cobra.Command {
 	var since string
 	var remotes []string
@@ -66,25 +121,7 @@ ones. Remote sessions carry a "host" meta field.`,
 					"errors":   report.ErrorCount(),
 				})
 			}
-			for _, s := range report.Sources {
-				label := s.Agent
-				if s.Host != "" {
-					label = s.Agent + "@" + s.Host
-				}
-				if !s.Found {
-					fmt.Printf("%-12s not found\n", label)
-					continue
-				}
-				fmt.Printf("%-12s scanned %-4d archived %-4d skipped %-4d", label, s.Scanned, s.Archived, s.Skipped)
-				if len(s.Errors) > 0 {
-					fmt.Printf(" errors %d", len(s.Errors))
-				}
-				fmt.Println()
-				for _, e := range s.Errors {
-					fmt.Printf("  ! %s\n", e)
-				}
-			}
-			fmt.Printf("synced: %d session(s) archived\n", report.Archived())
+			renderSyncReport(app, report)
 			return nil
 		},
 	}

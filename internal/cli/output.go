@@ -34,11 +34,28 @@ func (a *App) paint(code, s string) string {
 	return "\x1b[" + code + "m" + s + "\x1b[0m"
 }
 
-func (a *App) bold(s string) string   { return a.paint("1", s) }
-func (a *App) cyan(s string) string   { return a.paint("36", s) }
-func (a *App) green(s string) string  { return a.paint("32", s) }
-func (a *App) yellow(s string) string { return a.paint("33", s) }
-func (a *App) gray(s string) string   { return a.paint("90", s) }
+func (a *App) bold(s string) string    { return a.paint("1", s) }
+func (a *App) dim(s string) string     { return a.paint("2", s) }
+func (a *App) cyan(s string) string    { return a.paint("36", s) }
+func (a *App) green(s string) string   { return a.paint("32", s) }
+func (a *App) yellow(s string) string  { return a.paint("33", s) }
+func (a *App) magenta(s string) string { return a.paint("35", s) }
+func (a *App) red(s string) string     { return a.paint("31", s) }
+func (a *App) gray(s string) string    { return a.paint("90", s) }
+
+// agentColor picks a stable color per agent so rows group visually.
+func (a *App) agentColor(agent string) string {
+	switch agent {
+	case "claude-code":
+		return a.magenta(agent)
+	case "codex":
+		return a.green(agent)
+	case "cursor":
+		return a.cyan(agent)
+	default:
+		return a.yellow(agent)
+	}
+}
 
 // cliError is a machine-actionable error (agent-cli-guide principle 9).
 type cliError struct {

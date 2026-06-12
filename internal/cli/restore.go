@@ -86,7 +86,12 @@ Default strategy is native when the target supports it, brief otherwise.`,
 						return err
 					}
 				} else {
-					fmt.Printf("would restore %s (%d messages) to %s via %s\n", full, len(sess.Messages), to, strategy)
+					fmt.Printf("%s would restore %s (%d msg) to %s via %s\n",
+						app.gray("·"),
+						app.cyan(full),
+						len(sess.Messages),
+						app.agentColor(to),
+						app.bold(strategy))
 				}
 				return errDryRun
 			}
@@ -102,7 +107,10 @@ Default strategy is native when the target supports it, brief otherwise.`,
 						"strategy": "native", "target": to, "source": full, "resume_command": resumeCmd,
 					})
 				}
-				fmt.Printf("restored %s as a native %s session.\nResume it with:\n\n  %s\n", full, to, app.bold(resumeCmd))
+				fmt.Printf("%s restored %s as a native %s session.\n%s\n\n  %s\n",
+					app.green("✓"), app.cyan(full), app.agentColor(to),
+					app.gray("Resume it with:"),
+					app.bold(resumeCmd))
 				return nil
 			case "brief":
 				runner, err := llm.Pick(llmName)
@@ -126,7 +134,10 @@ Default strategy is native when the target supports it, brief otherwise.`,
 						"source": full, "handoff_file": output, "start_command": start,
 					})
 				}
-				fmt.Printf("handoff written to %s (%s).\nStart the next agent with:\n\n  %s\n", output, method, app.bold(start))
+				fmt.Printf("%s handoff written to %s %s\n%s\n\n  %s\n",
+					app.green("✓"), app.cyan(output), app.gray("("+method+")"),
+					app.gray("Start the next agent with:"),
+					app.bold(start))
 				return nil
 			default:
 				return usageErrf("unknown strategy %q (native|brief)", strategy)

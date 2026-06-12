@@ -4,13 +4,48 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
 )
+
+// renderSessionList prints sessions in a tight, colored table with
+// rune-aware column widths. Columns: id · agent · updated · msgs · title.
+// Project is shown as a subtle prefix on the title when it differs from
+// the title, to save horizontal space.
+func renderSessionList(app *App, sums []model.Summary) {
+	const idW, agentW, timeW, msgsW = 22, 11, 9, 6
+
+	header := fmt.Sprintf("  %s  %s  %s  %s  %s",
+		padRightDisp("ID", idW),
+		padRightDisp("AGENT", agentW),
+		padRightDisp("UPDATED", timeW),
+		padRightDisp("MSGS", msgsW),
+		"TITLE")
+	fmt.Println(app.gray(header))
+
+	for _, s := range sums {
+		title := s.Title
+		if title == "" {
+			title = s.Project
+		}
+		titleCol := truncDisp(title, 60)
+		if s.Project != "" && s.Title != "" {
+			titleCol = app.gray(truncDisp(s.Project, 28)) + "  " + titleCol
+		}
+		id := padRightDisp(shortID(s.ID), idW)
+		agent := padRightDisp(s.Agent, agentW)
+		fmt.Printf("  %s  %s  %s  %s  %s\n",
+			app.cyan(shortID(s.ID))+id[len(shortID(s.ID)):],
+			app.agentColor(s.Agent)+agent[len(s.Agent):],
+			padRightDisp(relTime(s.UpdatedAt), timeW),
+			padRightDisp(fmt.Sprintf("%d", s.MsgCount), msgsW),
+			titleCol)
+	}
+	fmt.Printf("\n%s\n", app.gray(fmt.Sprintf("%d session(s). tape show <id> to replay.", len(sums))))
+}
 
 func newLsCmd(app *App) *cobra.Command {
 	var agent, project, since string
@@ -56,13 +91,8 @@ func newLsCmd(app *App) *cobra.Command {
 			if len(sums) == 0 {
 				return ErrNoResults
 			}
-			w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tAGENT\tUPDATED\tMSGS\tPROJECT\tTITLE")
-			for _, s := range sums {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
-					shortID(s.ID), s.Agent, fmtTime(s.UpdatedAt), s.MsgCount, truncate(s.Project, 32), truncate(s.Title, 48))
-			}
-			return w.Flush()
+			renderSessionList(app, sums)
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent (claude-code, codex, cursor)")
