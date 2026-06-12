@@ -106,6 +106,13 @@ func (p *Progress) draw(force bool) {
 	if !force && now.Sub(p.lastDraw) < 50*time.Millisecond {
 		return
 	}
+	// First paint: leave a blank line above the bar so it doesn't sit
+	// flush against the user's previous prompt / command output. `Done`
+	// only clears the bar's own line, so this padding survives the run
+	// and continues to separate the bar's final note from history.
+	if p.lastDraw.IsZero() {
+		fmt.Fprintln(p.w)
+	}
 	p.lastDraw = now
 
 	var line string
