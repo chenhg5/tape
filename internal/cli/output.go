@@ -71,15 +71,19 @@ func (a *App) brand(xterm256 int, s string) string {
 //	iflow       → xterm 122  soft-aqua        (≈ #87ffd7, iFlow teal)
 //	aider       → xterm 180  warm-tan         (≈ #d7af87, paper / pencil hue)
 //	opencode    → xterm 156  spring-green     (≈ #afff87, opencode terminal green)
+//	antigravity → xterm 147  cornflower-blue  (≈ #afafff, Antigravity 2.0 violet)
+//	qoder       → xterm 207  bright-magenta   (≈ #ff5fff, Qoder neon brand)
 const (
-	colorClaude   = 216
-	colorCodex    = 189
-	colorCursor   = 252
-	colorGemini   = 117
-	colorQwen     = 175
-	colorIFlow    = 122
-	colorAider    = 180
-	colorOpencode = 156
+	colorClaude      = 216
+	colorCodex       = 189
+	colorCursor      = 252
+	colorGemini      = 117
+	colorQwen        = 175
+	colorIFlow       = 122
+	colorAider       = 180
+	colorOpencode    = 156
+	colorAntigravity = 147
+	colorQoder       = 207
 )
 
 // agentColor paints the agent name in its brand color so rows group visually
@@ -102,6 +106,10 @@ func (a *App) agentColor(agent string) string {
 		return a.brand(colorAider, agent)
 	case "opencode":
 		return a.brand(colorOpencode, agent)
+	case "antigravity":
+		return a.brand(colorAntigravity, agent)
+	case "qoder":
+		return a.brand(colorQoder, agent)
 	default:
 		return a.yellow(agent)
 	}

@@ -67,6 +67,8 @@ func TestStartHint(t *testing.T) {
 		"iflow":       "iflow",
 		"aider":       "aider",
 		"opencode":    "opencode",
+		"antigravity": "agy",
+		"qoder":       "qodercli",
 	}
 	for agent, bin := range cases {
 		if hint := startHint(agent, "h.md"); !strings.HasPrefix(hint, bin+" ") || !strings.Contains(hint, "h.md") {

@@ -68,10 +68,12 @@ func TestInjectMemoryPhaseAAgentsAllResolveToMemoryFile(t *testing.T) {
 	// regression guard so we don't silently drop one when we touch
 	// memoryFile() later.
 	want := map[string]string{
-		"gemini": "GEMINI.md",
-		"qwen":   "QWEN.md",
-		"iflow":  "IFLOW.md",
-		"aider":  "CONVENTIONS.md",
+		"gemini":      "GEMINI.md",
+		"qwen":        "QWEN.md",
+		"iflow":       "IFLOW.md",
+		"aider":       "CONVENTIONS.md",
+		"antigravity": "GEMINI.md", // Antigravity inherits gemini-cli's convention
+		"qoder":       "AGENTS.md", // qoder is in the AGENTS.md family
 	}
 	for agent, expected := range want {
 		root := t.TempDir()

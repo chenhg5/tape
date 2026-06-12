@@ -8,12 +8,14 @@ import (
 	"github.com/chenhg5/tape/internal/cli"
 	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/source/aider"
+	"github.com/chenhg5/tape/internal/source/antigravity"
 	"github.com/chenhg5/tape/internal/source/claudecode"
 	"github.com/chenhg5/tape/internal/source/codex"
 	"github.com/chenhg5/tape/internal/source/cursor"
 	"github.com/chenhg5/tape/internal/source/gemini"
 	"github.com/chenhg5/tape/internal/source/iflow"
 	"github.com/chenhg5/tape/internal/source/opencode"
+	"github.com/chenhg5/tape/internal/source/qoder"
 	"github.com/chenhg5/tape/internal/source/qwen"
 )
 
@@ -30,8 +32,10 @@ func main() {
 			codex.New(home),
 			cursor.New(home),
 			gemini.New(home),
+			antigravity.New(home),
 			qwen.New(home),
 			iflow.New(home),
+			qoder.New(home),
 			aider.New(home),
 			opencode.New(home),
 		}

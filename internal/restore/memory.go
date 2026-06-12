@@ -12,6 +12,8 @@ package restore
 //   codex       → AGENTS.md   (Codex follows the AGENTS.md convention)
 //   cursor      → AGENTS.md   (cursor-agent also reads AGENTS.md)
 //   opencode    → AGENTS.md   (opencode's /init writes here; CLAUDE.md is fallback)
+//   qoder       → AGENTS.md   (qodercli /init writes AGENTS.md per docs)
+//   antigravity → GEMINI.md   (Antigravity keeps gemini-cli's <AGENT>.md convention)
 //   gemini      → GEMINI.md   (gemini-cli loads <Agent>.md from the cwd)
 //   qwen        → QWEN.md     (qwen-code likewise)
 //   iflow       → IFLOW.md    (iflow's docs explicitly call this out)
@@ -36,9 +38,9 @@ func memoryFile(agent string) string {
 	switch agent {
 	case "claude-code":
 		return "CLAUDE.md"
-	case "codex", "cursor", "opencode":
+	case "codex", "cursor", "opencode", "qoder":
 		return "AGENTS.md"
-	case "gemini":
+	case "gemini", "antigravity":
 		return "GEMINI.md"
 	case "qwen":
 		return "QWEN.md"

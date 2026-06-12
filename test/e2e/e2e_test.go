@@ -233,6 +233,45 @@ func (e *env) seedIFlow() {
 // opencodeSessionID matches the row id we seed into opencode.db below.
 const opencodeSessionID = "ses_opencode_demo"
 
+const (
+	antigravitySessionID = "11111111-2222-3333-4444-555555555555"
+	qoderSessionID       = "qoder-s-001"
+)
+
+func (e *env) seedAntigravity() {
+	e.t.Helper()
+	logs := filepath.Join(e.home, ".gemini", "antigravity-cli", "brain", antigravitySessionID, ".system_generated", "logs")
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	lines := []string{
+		`{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-05-24T12:14:37Z","content":"What is Antigravity CLI?"}`,
+		`{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-05-24T12:14:38Z","content":"Antigravity is Google's successor to gemini-cli, with a new transcript format."}`,
+	}
+	path := filepath.Join(logs, "transcript_full.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) seedQoder() {
+	e.t.Helper()
+	dir := filepath.Join(e.home, ".qoder", "projects", "demo")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	lines := []string{
+		`{"uuid":"u1","parentUuid":null,"sessionId":"` + qoderSessionID + `","timestamp":"2026-06-12T10:00:00.000Z","type":"user","cwd":"/root/code/demo","message":{"role":"user","parts":[{"text":"qoder 怎么用"}]}}`,
+		`{"uuid":"a1","parentUuid":"u1","sessionId":"` + qoderSessionID + `","timestamp":"2026-06-12T10:00:01.000Z","type":"assistant","model":"qoder-pro","message":{"role":"model","parts":[{"text":"参考 docs.qoder.com"}]}}`,
+	}
+	path := filepath.Join(dir, qoderSessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	// Sidecar that List() must filter out.
+	_ = os.WriteFile(filepath.Join(dir, qoderSessionID+"-session.json"), []byte(`{}`), 0o600)
+}
+
 func (e *env) seedOpenCode() {
 	e.t.Helper()
 	dir := filepath.Join(e.home, ".local", "share", "opencode")

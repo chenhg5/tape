@@ -106,7 +106,8 @@ Default strategy is native when the target supports it, memory otherwise.`,
 			}
 			if to == "" {
 				return usageErrf("--to <agent> is required. " +
-					"Pick one of: claude-code | codex | cursor.\n" +
+					"Pick one of: claude-code | codex | cursor | opencode | " +
+					"gemini | antigravity | qwen | iflow | qoder | aider.\n" +
 					"  e.g. tape restore @last --to codex")
 			}
 			full, err := app.resolveSessionID(cmd.Context(), id)
@@ -264,7 +265,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 			}
 		},
 	}
-	cmd.Flags().StringVar(&to, "to", "", "target agent: claude-code|codex|cursor (required outside interactive mode)")
+	cmd.Flags().StringVar(&to, "to", "", "target agent (required outside interactive mode); use `tape ls --json` to see archived agents")
 	cmd.Flags().StringVar(&strategy, "strategy", "auto", "restore strategy: auto|native|memory|transcript|brief")
 	cmd.Flags().StringVar(&output, "output", ".tape-handoff.md", "handoff file path (memory/transcript/brief)")
 	cmd.Flags().StringVar(&llmName, "llm", "auto", "summarizer for brief: auto|claude|codex|cursor|none")
@@ -297,6 +298,10 @@ func agentLaunchBin(agent string) (string, bool) {
 		return "aider", true
 	case "opencode":
 		return "opencode", true
+	case "antigravity":
+		return "agy", true
+	case "qoder":
+		return "qodercli", true
 	default:
 		return agent, false
 	}

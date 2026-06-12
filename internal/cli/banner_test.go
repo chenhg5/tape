@@ -61,7 +61,9 @@ func TestAgentColorBrandTable(t *testing.T) {
 	// every known agent has a branch and unknown agents fall back.
 	for _, agent := range []string{
 		"claude-code", "codex", "cursor",
-		"gemini", "qwen", "iflow", "aider", "opencode",
+		"gemini", "antigravity",
+		"qwen", "iflow", "qoder",
+		"aider", "opencode",
 		"mystery",
 	} {
 		if got := app.agentColor(agent); got != agent {

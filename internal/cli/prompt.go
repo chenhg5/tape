@@ -144,9 +144,9 @@ func memoryFileHint(target string) string {
 	switch target {
 	case "claude-code":
 		return "CLAUDE.md"
-	case "codex", "cursor", "opencode":
+	case "codex", "cursor", "opencode", "qoder":
 		return "AGENTS.md"
-	case "gemini":
+	case "gemini", "antigravity":
 		return "GEMINI.md"
 	case "qwen":
 		return "QWEN.md"
@@ -178,7 +178,9 @@ func pickRestore(ctx context.Context, app *App, dir string) (sessionID, target, 
 	// keeps muscle memory predictable across runs.
 	for _, a := range []string{
 		"claude-code", "codex", "cursor", "opencode",
-		"gemini", "qwen", "iflow", "aider",
+		"antigravity", "gemini",
+		"qoder", "qwen", "iflow",
+		"aider",
 	} {
 		if a != src.Agent {
 			targets = append(targets, a)

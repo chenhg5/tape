@@ -143,7 +143,7 @@ parsing prose.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent (claude-code, codex, cursor)")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent (claude-code, codex, cursor, opencode, gemini, antigravity, qwen, iflow, qoder, aider)")
 	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")

@@ -54,9 +54,9 @@ Tape 把这些会话当作**用户拥有的、第一公民的数据资产**来�
                     │   采集 → 归一化 → 本地归档库 → 索引 │
                     └─────────────────────────────────┘
         ┌───────────────────────────────────────────────┐
-        │ Source Providers:claude-code · codex · cursor · gemini · qwen · iflow · aider · opencode │
-        │ · gemini-cli · opencode · …(可插拔)            │
-        └───────────────────────────────────────────────┘
+        │ Source Providers:claude-code · codex · cursor · opencode │
+        │ gemini / antigravity · qwen · iflow / qoder · aider · …  │
+        └──────────────────────────────────────────────────────────┘
 ```
 
 ### 2.1 Archive(归档)— 一切能力的地基
@@ -395,6 +395,7 @@ tape stats
 | **M2 备份** | Redactor、git + tar 两个 BackupTarget、zstd、`backup/index rebuild`、换机 `pull` 恢复归档 | 私有 git 仓库完成一次全量备份与异机还原 | ✅ 真实归档扫出 83 处 secret 并拦截;980MB→35MB 脱敏导出;异机 clone+重建索引检索成功 |
 | **M3 恢复** | `brief` 策略(LLMRunner: claude/codex/cursor CLI)、`native` 策略(claude↔codex 双向)、`restore/rewind` | Claude 会话在 Codex 原生 resume 成功;失败可降级 | ✅ claude→codex 原生 resume 实测成功;brief(codex 总结)与模板降级验证 |
 | **M3.5 Phase A 扩源** | Gemini CLI / Qwen Code / iFlow / Aider / OpenCode 五个新 Source;`memory` 策略适配各家 `<AGENT>.md` 约定;品牌色+交互 picker 列表 | 8 家 agent 全部跑通 `sync → search → show → restore (memory/transcript)` | ✅ 全部解析器单测+端到端验证(`TestPhaseAAgents`)，OpenCode 走 Drizzle SQLite (`session/message/part`) |
+| **M3.6 EOL 救援** | Antigravity CLI(Gemini CLI 后继,2026/06/18 切换)、Qoder CLI(iFlow CLI 后继,iFlow 已 2026/04/17 停服)两个继任者;支持矩阵加 `status` 列(active/succeeded by …/EOL)透明披露 vendor 状态 | 10 家 agent 完整覆盖;用户能从已停服 CLI 抢救历史 | ✅ Antigravity 独立 step 解析器(`step_index/source/type`),Qoder 复用 Qwen ChatRecord schema |
 | **M4 记忆与 agent 化** | Extractor(llm/rule)、`memory`、`ask`、`stats`、MCP server、`init --agents-md` | 任意 agent 通过 MCP 查询历史并拿到交接文档 | 待做 |
 
 M3 后增量交付:
