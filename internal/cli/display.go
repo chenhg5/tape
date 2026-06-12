@@ -1,9 +1,38 @@
 package cli
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
+
+// ansiSeqRe matches the ANSI control sequences we actually emit:
+// SGR / cursor moves (`\x1b[…<letter>`) and OSC strings closed by BEL
+// or ST (`\x1b]…\x07` / `\x1b]…\x1b\\`). Good enough for stripping the
+// styled prefixes we ourselves produce; not a general ANSI parser.
+var ansiSeqRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+
+// stripANSI returns s with our own ANSI escape sequences removed. Use
+// it before any width / column calculation on already-colored strings.
+func stripANSI(s string) string { return ansiSeqRe.ReplaceAllString(s, "") }
+
+// visibleWidth is dispWidth that also ignores ANSI escapes — the right
+// answer for picker rows and other layout code that consumes
+// already-colored input.
+func visibleWidth(s string) int { return dispWidth(stripANSI(s)) }
+
+// wrappedRows estimates how many terminal rows a single logical line
+// of `visW` visible columns occupies when the terminal is `termW`
+// columns wide. Used by the picker to keep its cursor-up math honest
+// when items are too long to fit on one row. `termW <= 0` means
+// "unknown size, assume no wrapping" — better to clear too few rows
+// than to mis-clear what we can't see.
+func wrappedRows(visW, termW int) int {
+	if termW <= 0 || visW <= 0 {
+		return 1
+	}
+	return (visW + termW - 1) / termW
+}
 
 // dispWidth approximates how many terminal columns a string occupies:
 // East-Asian wide characters and common emoji ranges count as 2, ASCII

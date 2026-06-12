@@ -54,17 +54,34 @@ func pickInteractive(app *App, title string, items []string) (int, error) {
 	fmt.Fprintf(out, "\r\n%s\r\n", app.bold(title))
 
 	cursor := 0
-	drawn := 0
+	drawn := 0 // total visual rows the previous frame occupied minus 1
 	hint := app.gray("[↑/↓ move · Enter select · 1-9 jump · q quit]")
 
+	// Detect terminal width once per render so we can account for soft
+	// wraps: a single logical row of a long item can wrap into 2-3 real
+	// rows on a narrow window, and an erase that only walks back
+	// len(items) rows leaves the wrap leftovers on screen as ghost
+	// copies of the cursor row. termW <= 0 ⇒ size unknown ⇒ wrappedRows
+	// returns 1 and we degrade to the pre-fix behavior.
+	termW, _, _ := term.GetSize(fd)
+
 	render := func() {
-		// Erase previous frame: jump to the line we first wrote and
-		// clear to end-of-screen. Cheap and works on every ANSI term.
+		// Erase previous frame: jump to the first row of the previous
+		// render and clear from there to end-of-screen. `drawn` is
+		// kept in real (post-wrap) rows so this still works on narrow
+		// terminals.
 		if drawn > 0 {
 			fmt.Fprintf(out, "\x1b[%dA", drawn)
 			fmt.Fprint(out, "\x1b[J")
 		}
 		var b strings.Builder
+		// Cursor anchor logic: after the loop + hint emit, the cursor
+		// sits on the hint's final wrapped row at column 0. The first
+		// item row is `totalRows - 1` rows above (we don't subtract
+		// the hint row separately — hint's own wrapped rows are
+		// counted in totalRows). On the first paint drawn stays 0
+		// because there's no previous frame to erase.
+		totalRows := 0
 		for i, it := range items {
 			if i == cursor {
 				b.WriteString(app.cyan("▸ "))
@@ -74,24 +91,27 @@ func pickInteractive(app *App, title string, items []string) (int, error) {
 				b.WriteString(it)
 			}
 			b.WriteString("\r\n")
+			// 2 leading columns for the "▸ " / "  " prefix.
+			totalRows += wrappedRows(visibleWidth(it)+2, termW)
 		}
 		b.WriteString(hint)
 		b.WriteString("\r")
+		totalRows += wrappedRows(visibleWidth(hint), termW)
 		fmt.Fprint(out, b.String())
-		// Cursor anchor: the hint trailing "\r" leaves the cursor on
-		// the hint row, column 0. The first item row is exactly
-		// len(items) rows above. We don't add +1 for hint because
-		// \x1b[J below clears from the anchor to the end of screen,
-		// taking the hint row with it on its way down. Counting +1
-		// would land us on the title row and wipe it on every keypress.
-		drawn = len(items)
+		drawn = totalRows - 1
+		if drawn < 0 {
+			drawn = 0
+		}
 	}
 	finish := func() {
-		// Clear the hint line and emit a real newline so subsequent
-		// output (another picker, a success message) starts at column
-		// 0 on its own row. The menu itself is left rendered above —
-		// it doubles as an audit trail of what the user picked.
-		fmt.Fprint(out, "\x1b[2K\r\n")
+		// Clear the hint line (may have wrapped) and emit a real
+		// newline so subsequent output (another picker, a success
+		// message) starts at column 0 on its own row. The menu itself
+		// is left rendered above — it doubles as an audit trail of
+		// what the user picked. `[J` clears from the cursor (col 0 of
+		// the hint's last wrapped row) to end-of-screen, taking the
+		// rest of the wrapped hint with it.
+		fmt.Fprint(out, "\x1b[J\r\n")
 	}
 
 	render()

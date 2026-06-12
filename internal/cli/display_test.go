@@ -109,3 +109,55 @@ func TestPaddingComposesWithColor(t *testing.T) {
 	}
 	_ = strings.Repeat // keep import
 }
+
+func TestStripANSIAndVisibleWidth(t *testing.T) {
+	cases := []struct {
+		in    string
+		want  string
+		visW  int
+	}{
+		// SGR foreground + reset:
+		{"\x1b[36mhello\x1b[0m", "hello", 5},
+		// 256-color + bold composed:
+		{"\x1b[1m\x1b[38;5;216mclaude-code\x1b[0m", "claude-code", 11},
+		// OSC sequence (terminated by BEL): stripped entirely.
+		{"\x1b]52;c;Zm9v\x07after", "after", 5},
+		// Mixed CJK + color:
+		{"\x1b[33m中文\x1b[0m abc", "中文 abc", 8},
+		{"plain", "plain", 5},
+		{"", "", 0},
+	}
+	for _, c := range cases {
+		if got := stripANSI(c.in); got != c.want {
+			t.Errorf("stripANSI(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if got := visibleWidth(c.in); got != c.visW {
+			t.Errorf("visibleWidth(%q) = %d, want %d", c.in, got, c.visW)
+		}
+	}
+}
+
+// wrappedRows is the math the picker uses to keep its cursor-up count
+// honest on narrow terminals — bugs here are what produced the ghost-
+// cursor-row bug. Lock in the boundary cases.
+func TestWrappedRows(t *testing.T) {
+	cases := []struct {
+		visW, termW, want int
+	}{
+		{0, 80, 1},   // empty line still occupies a row
+		{1, 80, 1},   // fits
+		{80, 80, 1},  // exactly one row
+		{81, 80, 2},  // soft wrap once
+		{160, 80, 2}, // exactly two rows
+		{161, 80, 3},
+		{50, 0, 1}, // unknown width ⇒ assume no wrap
+		{50, -1, 1},
+		{0, 0, 1},
+	}
+	for _, c := range cases {
+		if got := wrappedRows(c.visW, c.termW); got != c.want {
+			t.Errorf("wrappedRows(visW=%d, termW=%d) = %d, want %d",
+				c.visW, c.termW, got, c.want)
+		}
+	}
+}
