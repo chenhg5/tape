@@ -59,7 +59,11 @@ func TestAgentColorBrandTable(t *testing.T) {
 	app := plainApp()
 	// With color off the result equals the input — what matters is that
 	// every known agent has a branch and unknown agents fall back.
-	for _, agent := range []string{"claude-code", "codex", "cursor", "mystery"} {
+	for _, agent := range []string{
+		"claude-code", "codex", "cursor",
+		"gemini", "qwen", "iflow", "aider",
+		"mystery",
+	} {
 		if got := app.agentColor(agent); got != agent {
 			t.Errorf("agentColor(%q) = %q, want plain %q", agent, got, agent)
 		}

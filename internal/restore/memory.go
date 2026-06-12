@@ -11,6 +11,10 @@ package restore
 //   claude-code → CLAUDE.md   (Claude Code reads this on startup)
 //   codex       → AGENTS.md   (Codex follows the AGENTS.md convention)
 //   cursor      → AGENTS.md   (cursor-agent also reads AGENTS.md)
+//   gemini      → GEMINI.md   (gemini-cli loads <Agent>.md from the cwd)
+//   qwen        → QWEN.md     (qwen-code likewise)
+//   iflow       → IFLOW.md    (iflow's docs explicitly call this out)
+//   aider       → CONVENTIONS.md (aider's --read default convention file)
 //
 // Why not .cursor/rules/? It works, but AGENTS.md is the cross-agent
 // standard and saves us from per-agent path knowledge. If the user keeps
@@ -33,6 +37,14 @@ func memoryFile(agent string) string {
 		return "CLAUDE.md"
 	case "codex", "cursor":
 		return "AGENTS.md"
+	case "gemini":
+		return "GEMINI.md"
+	case "qwen":
+		return "QWEN.md"
+	case "iflow":
+		return "IFLOW.md"
+	case "aider":
+		return "CONVENTIONS.md"
 	default:
 		return ""
 	}

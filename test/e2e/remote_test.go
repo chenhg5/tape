@@ -56,8 +56,12 @@ func TestRemoteSync(t *testing.T) {
 		host, _ := src["host"].(string)
 		hosts[host]++
 	}
-	if hosts[""] != 3 || hosts["dev@build-server"] != 3 {
-		t.Errorf("source hosts: %v", hosts)
+	// One entry per source per host. The exact count is "however many
+	// adapters we register" — we don't assert on the absolute number to
+	// avoid breaking every time Phase B/C/D lands a new agent.
+	if hosts[""] == 0 || hosts["dev@build-server"] == 0 ||
+		hosts[""] != hosts["dev@build-server"] {
+		t.Errorf("source hosts (expected symmetric local/remote): %v", hosts)
 	}
 
 	// remote session is searchable like any other

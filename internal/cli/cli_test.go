@@ -58,7 +58,16 @@ func TestTruncateHelper(t *testing.T) {
 }
 
 func TestStartHint(t *testing.T) {
-	for agent, bin := range map[string]string{"claude-code": "claude", "codex": "codex", "cursor": "cursor-agent"} {
+	cases := map[string]string{
+		"claude-code": "claude",
+		"codex":       "codex",
+		"cursor":      "cursor-agent",
+		"gemini":      "gemini",
+		"qwen":        "qwen",
+		"iflow":       "iflow",
+		"aider":       "aider",
+	}
+	for agent, bin := range cases {
 		if hint := startHint(agent, "h.md"); !strings.HasPrefix(hint, bin+" ") || !strings.Contains(hint, "h.md") {
 			t.Errorf("%s hint = %q", agent, hint)
 		}

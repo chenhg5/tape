@@ -128,7 +128,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 				}
 			}
 			if target == nil {
-				return usageErrf("unknown target agent %q (claude-code|codex|cursor)", to)
+				return usageErrf("unknown target agent %q (run `tape ls --json` to see registered agents)", to)
 			}
 			writer, canNative := target.(ports.SessionWriter)
 			if strategy == "auto" {
@@ -273,32 +273,46 @@ Default strategy is native when the target supports it, memory otherwise.`,
 	return cmd
 }
 
-func startHint(agent, handoff string) string {
-	prompt := fmt.Sprintf("Read %s and continue the work described there", handoff)
+// agentLaunchBin returns the shell command used to start the named agent
+// in an interactive session — used both for "open this handoff in agent X"
+// hints and for the memory-strategy variant where the agent auto-loads
+// the handoff from a CLAUDE.md / AGENTS.md / IFLOW.md file. The bool is
+// false when the agent has no known launcher; callers then fall back to
+// a generic prompt that doesn't assume a binary name.
+func agentLaunchBin(agent string) (string, bool) {
 	switch agent {
 	case "claude-code":
-		return fmt.Sprintf("claude %q", prompt)
+		return "claude", true
 	case "codex":
-		return fmt.Sprintf("codex %q", prompt)
+		return "codex", true
 	case "cursor":
-		return fmt.Sprintf("cursor-agent %q", prompt)
+		return "cursor-agent", true
+	case "gemini":
+		return "gemini", true
+	case "qwen":
+		return "qwen", true
+	case "iflow":
+		return "iflow", true
+	case "aider":
+		return "aider", true
 	default:
-		return prompt
+		return agent, false
 	}
 }
 
-// startInProject is the memory-strategy variant of startHint: the agent
-// auto-loads the handoff because we wrote it into CLAUDE.md/AGENTS.md,
-// so the user just opens the agent inside the project — no prompt needed.
-func startInProject(agent, projectRoot string) string {
-	switch agent {
-	case "claude-code":
-		return fmt.Sprintf("cd %s && claude", projectRoot)
-	case "codex":
-		return fmt.Sprintf("cd %s && codex", projectRoot)
-	case "cursor":
-		return fmt.Sprintf("cd %s && cursor-agent", projectRoot)
-	default:
-		return fmt.Sprintf("cd %s && %s", projectRoot, agent)
+func startHint(agent, handoff string) string {
+	prompt := fmt.Sprintf("Read %s and continue the work described there", handoff)
+	bin, ok := agentLaunchBin(agent)
+	if !ok {
+		return prompt
 	}
+	return fmt.Sprintf("%s %q", bin, prompt)
+}
+
+// startInProject is the memory-strategy variant of startHint: the agent
+// auto-loads the handoff because we wrote it into the project's memory
+// file, so the user just opens the agent inside the project root.
+func startInProject(agent, projectRoot string) string {
+	bin, _ := agentLaunchBin(agent)
+	return fmt.Sprintf("cd %s && %s", projectRoot, bin)
 }

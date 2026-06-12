@@ -146,6 +146,14 @@ func memoryFileHint(target string) string {
 		return "CLAUDE.md"
 	case "codex", "cursor":
 		return "AGENTS.md"
+	case "gemini":
+		return "GEMINI.md"
+	case "qwen":
+		return "QWEN.md"
+	case "iflow":
+		return "IFLOW.md"
+	case "aider":
+		return "CONVENTIONS.md"
 	default:
 		return "the project memory file"
 	}
@@ -165,7 +173,13 @@ func pickRestore(ctx context.Context, app *App, dir string) (sessionID, target, 
 		return "", "", "", err
 	}
 	var targets []string
-	for _, a := range []string{"claude-code", "codex", "cursor"} {
+	// Roughly ordered by global install share (claude-code/codex/cursor
+	// first, then Gemini-family, then aider). Sticking to a fixed order
+	// keeps muscle memory predictable across runs.
+	for _, a := range []string{
+		"claude-code", "codex", "cursor",
+		"gemini", "qwen", "iflow", "aider",
+	} {
 		if a != src.Agent {
 			targets = append(targets, a)
 		}

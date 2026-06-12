@@ -15,7 +15,7 @@
 
 ---
 
-You spend hours (and dollars) talking to **Claude Code**, **Codex** and **Cursor**. Those conversations are project knowledge — decisions made, approaches rejected, the *why* behind every line of code. But they are scattered across vendor-specific formats, locked to one machine, and impossible to search.
+You spend hours (and dollars) talking to **Claude Code**, **Codex**, **Cursor**, **Gemini CLI**, **Qwen Code**, **iFlow** and **Aider**. Those conversations are project knowledge — decisions made, approaches rejected, the *why* behind every line of code. But they are scattered across vendor-specific formats, locked to one machine, and impossible to search.
 
 Tape turns them into **data you own**:
 
@@ -200,13 +200,17 @@ The design rule: **raw files are first-class, everything else is derived.** Summ
 
 ## Supported agents
 
-| Agent | Reads | Native restore target |
-|---|---|---|
-| Claude Code | `~/.claude/projects/*/*.jsonl` | yes |
-| Codex CLI | `~/.codex/sessions/**/rollout-*.jsonl` | yes |
-| Cursor CLI | `~/.cursor/chats/*/*/store.db` | brief handoff |
+| Agent | Reads | Native restore target | Memory file |
+|---|---|---|---|
+| Claude Code | `~/.claude/projects/*/*.jsonl` | yes | `CLAUDE.md` |
+| Codex CLI | `~/.codex/sessions/**/rollout-*.jsonl` | yes | `AGENTS.md` |
+| Cursor CLI | `~/.cursor/chats/*/*/store.db` | memory / brief | `AGENTS.md` |
+| Gemini CLI | `~/.gemini/tmp/*/chats/session-*.jsonl` | memory / brief | `GEMINI.md` |
+| Qwen Code | `~/.qwen/projects/*/chats/*.jsonl` | memory / brief | `QWEN.md` |
+| iFlow CLI | `~/.iflow/{projects,conversations}/...` | memory / brief | `IFLOW.md` |
+| Aider | `~/.aider.chat.history.md` (+ project-local) | memory / brief | `CONVENTIONS.md` |
 
-Each agent is a small adapter behind one interface ([`ports.Source`](internal/core/ports/ports.go)); adding a new one does not touch the core. Contributions for Gemini CLI, OpenCode and Aider are welcome.
+Each agent is a small adapter behind one interface ([`ports.Source`](internal/core/ports/ports.go)); adding a new one does not touch the core. Contributions for OpenCode, Cline and others are welcome.
 
 ## Development
 
@@ -222,11 +226,11 @@ Architecture deep-dive (中文): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Roadmap
 
-- [x] **Archive & search** — claude-code, codex, cursor; CJK tokenization
+- [x] **Archive & search** — claude-code, codex, cursor, gemini, qwen, iflow, aider; CJK tokenization
 - [x] **Backup** — git and tarball targets, secret scanning and redaction
-- [x] **Restore** — native claude-code ↔ codex, brief handoff for everything else
+- [x] **Restore** — native claude-code ↔ codex, memory injection into the project's `<AGENT>.md` for everything else, plus transcript / brief fallbacks
 - [ ] **Memory** — distill `MEMORY.md` from session history; MCP server so agents can search past sessions mid-task
-- [ ] More sources (Gemini CLI, OpenCode, Aider) and backup targets (S3/OSS)
+- [ ] More sources (OpenCode, Cline, RooCode) and backup targets (S3/OSS)
 
 ## License
 

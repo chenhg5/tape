@@ -142,8 +142,10 @@ func TestRestoreErrors(t *testing.T) {
 	e.seedAllAgents()
 	e.mustRun(0, "sync")
 
-	// unknown target agent: usage error
-	if r := e.run("restore", "codex/019ea0af", "--to", "gemini"); r.code != 2 {
+	// unknown target agent: usage error. (Use a clearly-invented slug —
+	// the supported agent list grows over time and recycling real names
+	// turns this guard rail into a tripwire.)
+	if r := e.run("restore", "codex/019ea0af", "--to", "non-existent-agent"); r.code != 2 {
 		t.Errorf("unknown agent: exit %d, want 2", r.code)
 	}
 	// missing session: structured not_found error

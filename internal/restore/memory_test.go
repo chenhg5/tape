@@ -63,6 +63,28 @@ func TestInjectMemoryIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestInjectMemoryPhaseAAgentsAllResolveToMemoryFile(t *testing.T) {
+	// Each Phase-A agent must land in its conventional memory file —
+	// regression guard so we don't silently drop one when we touch
+	// memoryFile() later.
+	want := map[string]string{
+		"gemini": "GEMINI.md",
+		"qwen":   "QWEN.md",
+		"iflow":  "IFLOW.md",
+		"aider":  "CONVENTIONS.md",
+	}
+	for agent, expected := range want {
+		root := t.TempDir()
+		_, m, err := InjectMemory(root, agent, ".tape-handoff.md", "body")
+		if err != nil {
+			t.Fatalf("%s: %v", agent, err)
+		}
+		if filepath.Base(m) != expected {
+			t.Errorf("%s memory file = %s, want %s", agent, m, expected)
+		}
+	}
+}
+
 func TestInjectMemoryUnknownAgentSkipsMemoryFile(t *testing.T) {
 	root := t.TempDir()
 	h, m, err := InjectMemory(root, "unknown-agent", ".tape-handoff.md", "body")

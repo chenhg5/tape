@@ -101,6 +101,10 @@ func (e *env) runEnv(extra map[string]string, args ...string) result {
 		base = append(filtered, k+"="+v)
 	}
 	cmd.Env = base
+	// Run inside the fake HOME so any "default cwd" behaviour from tape
+	// (e.g. `restore --strategy memory`'s implicit `.tape-handoff.md`)
+	// scribbles into the tempdir, not the repo's test/e2e directory.
+	cmd.Dir = e.home
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf
 	err := cmd.Run()
@@ -165,6 +169,83 @@ func (e *env) seedAllAgents() {
 	e.seedClaude()
 	e.seedCodex()
 	e.seedCursor()
+}
+
+// Phase-A fixtures: Gemini-family agents share a JSONL transport, Aider
+// uses one merged markdown file. SessionIDs are fixed so resolveSessionID
+// tests have a stable target.
+const (
+	geminiSessionID = "d7501ec6"
+	qwenSessionID   = "session-001"
+	iflowSessionID  = "f1f1f1f1"
+)
+
+func (e *env) seedGemini() {
+	e.t.Helper()
+	dir := filepath.Join(e.home, ".gemini", "tmp", "abc123", "chats")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	lines := []string{
+		`{"sessionId":"` + geminiSessionID + `","projectHash":"abc123","startTime":"2026-06-12T10:00:00.000Z","directories":["/root/code/demo"]}`,
+		`{"id":"m1","type":"user","content":"先看下 webpack 配置","timestamp":"2026-06-12T10:00:01.000Z"}`,
+		`{"id":"m2","type":"gemini","content":"webpack.config.js 用了 babel-loader","timestamp":"2026-06-12T10:00:02.000Z","model":"gemini-2.5-pro"}`,
+	}
+	path := filepath.Join(dir, "session-2026-06-12T10-00-00-"+geminiSessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) seedQwen() {
+	e.t.Helper()
+	dir := filepath.Join(e.home, ".qwen", "projects", "abc123", "chats")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	lines := []string{
+		`{"uuid":"u1","parentUuid":null,"sessionId":"` + qwenSessionID + `","timestamp":"2026-06-12T10:00:00.000Z","type":"user","cwd":"/root/code/demo","gitBranch":"main","message":{"role":"user","parts":[{"text":"实现 jwt 鉴权"}]}}`,
+		`{"uuid":"a1","parentUuid":"u1","sessionId":"` + qwenSessionID + `","timestamp":"2026-06-12T10:00:01.000Z","type":"assistant","model":"qwen2.5-coder-30b","message":{"role":"model","parts":[{"text":"先看现有 auth.go"}]}}`,
+	}
+	path := filepath.Join(dir, qwenSessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) seedIFlow() {
+	e.t.Helper()
+	dir := filepath.Join(e.home, ".iflow", "projects", "abc123")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	lines := []string{
+		`{"sessionId":"` + iflowSessionID + `","projectHash":"abc123","startTime":"2026-06-12T10:00:00.000Z","directories":["/root/code/demo"]}`,
+		`{"id":"m1","type":"user","content":"翻译这段中文文档","timestamp":"2026-06-12T10:00:01.000Z"}`,
+		`{"id":"m2","type":"gemini","content":"Translation: ...","timestamp":"2026-06-12T10:00:02.000Z","model":"deepseek-v3"}`,
+	}
+	path := filepath.Join(dir, "session-2026-06-12T10-00-"+iflowSessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) seedAider() {
+	e.t.Helper()
+	body := `# aider chat started at 2026-06-12 10:30:45
+
+#### refactor the http handler
+
+Looking at handler.go — I'll extract the validation block.
+
+#### ship it
+
+Done. Tests pass.
+`
+	path := filepath.Join(e.home, ".aider.chat.history.md")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func (e *env) seedClaude() {

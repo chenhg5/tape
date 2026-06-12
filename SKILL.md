@@ -1,10 +1,11 @@
 ---
 name: tape
 description: >-
-  Archive, search and restore AI coding sessions (Claude Code, Codex, Cursor)
-  with the tape CLI. Use when the user wants to find a past conversation,
-  continue a session in a different agent, back up session history, or when
-  context from an earlier coding session would help the current task.
+  Archive, search and restore AI coding sessions (Claude Code, Codex, Cursor,
+  Gemini CLI, Qwen Code, iFlow, Aider) with the tape CLI. Use when the user
+  wants to find a past conversation, continue a session in a different agent,
+  back up session history, or when context from an earlier coding session
+  would help the current task.
 ---
 
 # Using tape
@@ -86,7 +87,7 @@ Strategies, highest fidelity first:
 | Strategy     | What it does                                                                                              | Best for                              |
 |--------------|-----------------------------------------------------------------------------------------------------------|---------------------------------------|
 | `native`     | Rewrites as a real session of the target agent; returns a `resume_command`. claude-code ↔ codex only.     | Same-agent-family resume              |
-| `memory`     | Writes a full transcript and `@`-references it from `CLAUDE.md` / `AGENTS.md` so the agent auto-loads it. | Cross-agent resume that "just works"  |
+| `memory`     | Writes a full transcript and `@`-references it from the target's project memory file (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md` / `QWEN.md` / `IFLOW.md` / `CONVENTIONS.md`) so the agent auto-loads it. | Cross-agent resume that "just works"  |
 | `transcript` | Writes the full verbatim conversation as markdown; user/agent reads on demand.                            | When you don't want to touch memory files |
 | `brief`      | LLM-condensed handoff. `--llm none` falls back to a deterministic template.                               | Token-constrained handoffs            |
 

@@ -7,9 +7,13 @@ import (
 
 	"github.com/chenhg5/tape/internal/cli"
 	"github.com/chenhg5/tape/internal/core/ports"
+	"github.com/chenhg5/tape/internal/source/aider"
 	"github.com/chenhg5/tape/internal/source/claudecode"
 	"github.com/chenhg5/tape/internal/source/codex"
 	"github.com/chenhg5/tape/internal/source/cursor"
+	"github.com/chenhg5/tape/internal/source/gemini"
+	"github.com/chenhg5/tape/internal/source/iflow"
+	"github.com/chenhg5/tape/internal/source/qwen"
 )
 
 var version = "0.1.0-dev"
@@ -24,6 +28,10 @@ func main() {
 			claudecode.New(home),
 			codex.New(home),
 			cursor.New(home),
+			gemini.New(home),
+			qwen.New(home),
+			iflow.New(home),
+			aider.New(home),
 		}
 	}
 	app := &cli.App{

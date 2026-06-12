@@ -63,13 +63,21 @@ func (a *App) brand(xterm256 int, s string) string {
 // crisp on dark and light terminals alike; the previous (173/105) pair felt
 // too saturated against the white-on-black output of most agents.
 //
-//	claude-code → xterm 216  light peach     (≈ #ffaf87, washed Anthropic orange)
-//	codex       → xterm 189  pale periwinkle (≈ #d7d7ff, faded dreamy violet)
-//	cursor      → xterm 252  silver-gray     (≈ #d0d0d0, Cursor monochrome IDE)
+//	claude-code → xterm 216  light peach      (≈ #ffaf87, washed Anthropic orange)
+//	codex       → xterm 189  pale periwinkle  (≈ #d7d7ff, faded dreamy violet)
+//	cursor      → xterm 252  silver-gray      (≈ #d0d0d0, Cursor monochrome IDE)
+//	gemini      → xterm 117  sky-blue         (≈ #87d7ff, washed Google blue)
+//	qwen        → xterm 175  dusty-rose       (≈ #d787af, Alibaba magenta)
+//	iflow       → xterm 122  soft-aqua        (≈ #87ffd7, iFlow teal)
+//	aider       → xterm 180  warm-tan         (≈ #d7af87, paper / pencil hue)
 const (
 	colorClaude = 216
 	colorCodex  = 189
 	colorCursor = 252
+	colorGemini = 117
+	colorQwen   = 175
+	colorIFlow  = 122
+	colorAider  = 180
 )
 
 // agentColor paints the agent name in its brand color so rows group visually
@@ -82,6 +90,14 @@ func (a *App) agentColor(agent string) string {
 		return a.brand(colorCodex, agent)
 	case "cursor":
 		return a.brand(colorCursor, agent)
+	case "gemini":
+		return a.brand(colorGemini, agent)
+	case "qwen":
+		return a.brand(colorQwen, agent)
+	case "iflow":
+		return a.brand(colorIFlow, agent)
+	case "aider":
+		return a.brand(colorAider, agent)
 	default:
 		return a.yellow(agent)
 	}
