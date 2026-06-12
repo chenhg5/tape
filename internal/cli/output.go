@@ -43,15 +43,24 @@ func (a *App) magenta(s string) string { return a.paint("35", s) }
 func (a *App) red(s string) string     { return a.paint("31", s) }
 func (a *App) gray(s string) string    { return a.paint("90", s) }
 
-// agentColor picks a stable color per agent so rows group visually.
+// brand colors: 256-color matches for the three agents' official hex.
+// claude (#d97757) → xterm 173 ≈ #d7875f
+// codex  (#10a37f) → xterm 36  ≈ #00af87
+// cursor (#f54e00) → xterm 202 ≈ #ff5f00
+func (a *App) brand(xterm256 int, s string) string {
+	return a.paint(fmt.Sprintf("38;5;%d", xterm256), s)
+}
+
+// agentColor paints the agent name in that agent's own brand color so
+// rows group visually and the output feels native to each tool.
 func (a *App) agentColor(agent string) string {
 	switch agent {
 	case "claude-code":
-		return a.magenta(agent)
+		return a.brand(173, agent) // Anthropic Crail orange #d97757
 	case "codex":
-		return a.green(agent)
+		return a.brand(36, agent) // OpenAI green #10a37f
 	case "cursor":
-		return a.cyan(agent)
+		return a.brand(202, agent) // Cursor Ember orange #f54e00
 	default:
 		return a.yellow(agent)
 	}

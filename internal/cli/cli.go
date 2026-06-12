@@ -85,10 +85,8 @@ func Execute(app *App) int {
 	root := &cobra.Command{
 		Use:   "tape",
 		Short: "Record, search and replay your AI coding sessions",
-		Long: `Tape archives sessions from Claude Code, Codex and Cursor into one place you own.
-Nothing gets lost on tape.
-
-Output is human-readable on a TTY and JSON when piped (or with --json).
+		Long: `Tape archives sessions from Claude Code, Codex and Cursor into one place
+you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 
 ` + exitCodeHelp,
 		Example: `  tape sync                          archive new sessions from all agents
@@ -98,6 +96,15 @@ Output is human-readable on a TTY and JSON when piped (or with --json).
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// Show the splash banner on top-level --help / -h, then delegate to
+	// cobra's default renderer. Subcommand help is untouched.
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if cmd == root && !app.useJSON() {
+			fmt.Fprintln(os.Stdout, banner(app, app.Version))
+		}
+		defaultHelp(cmd, args)
+	})
 	// flag parsing problems are usage errors (exit 2), not runtime errors
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return usageError{err}
