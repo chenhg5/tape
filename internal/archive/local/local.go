@@ -38,21 +38,53 @@ type Archive struct {
 func New(root string) *Archive { return &Archive{root: root} }
 
 type meta struct {
-	SchemaVersion int           `json:"schema_version"`
-	Checksum      string        `json:"checksum"`
-	SourceFiles   []string      `json:"source_files"`
-	ArchivedAt    time.Time     `json:"archived_at"`
-	Summary       model.Summary `json:"summary"`
+	SchemaVersion int      `json:"schema_version"`
+	Checksum      string   `json:"checksum"`
+	SourceFiles   []string `json:"source_files"`
+	// SourceStamps is a size+mtime fingerprint of each source file used as a
+	// fast path in Stale: most session files (e.g. Claude's append-only
+	// jsonl, Codex's rollout files) only ever grow, so a stamp mismatch is
+	// the cheap way to skip the blake3 hash. Empty for archives created
+	// before schema introduced stamps; in that case we always fall through
+	// to the hash, so old archives keep working.
+	SourceStamps []fileStamp   `json:"source_stamps,omitempty"`
+	ArchivedAt   time.Time     `json:"archived_at"`
+	Summary      model.Summary `json:"summary"`
+}
+
+// fileStamp is a cheap fingerprint that lets Stale skip hashing when nothing
+// has changed since the last archive. nanosecond mtime + byte size catches
+// every meaningful edit in practice; the blake3 checksum stays the ground
+// truth for cases where the stamp is suspicious (e.g. mtime drift, restore
+// from backup).
+type fileStamp struct {
+	Path  string    `json:"path"`
+	Size  int64     `json:"size"`
+	Mtime time.Time `json:"mtime"`
 }
 
 func (a *Archive) Stale(ref ports.SessionRef) (bool, string, error) {
-	sum, err := checksumFiles(ref.Files)
+	m, err := a.readMeta(a.dirOf(ref.Agent, ref.SourceID))
+	if err != nil {
+		// not archived yet (or unreadable meta -> re-archive)
+		sum, hErr := checksumFiles(ref.Files)
+		if hErr != nil {
+			return false, "", hErr
+		}
+		return true, sum, nil
+	}
+	// fast path: identical (size, mtime) means contents are unchanged.
+	stamps, err := stampFiles(ref.Files)
 	if err != nil {
 		return false, "", err
 	}
-	m, err := a.readMeta(a.dirOf(ref.Agent, ref.SourceID))
+	if stampsEqual(stamps, m.SourceStamps) {
+		return false, m.Checksum, nil
+	}
+	// stamp mismatch — verify with the hash before deciding.
+	sum, err := checksumFiles(ref.Files)
 	if err != nil {
-		return true, sum, nil // not archived yet (or unreadable meta -> re-archive)
+		return false, "", err
 	}
 	return m.Checksum != sum, sum, nil
 }
@@ -70,10 +102,12 @@ func (a *Archive) Put(ctx context.Context, s *model.Session, ref ports.SessionRe
 	if err := writeJSON(filepath.Join(dir, "session.json"), s); err != nil {
 		return err
 	}
+	stamps, _ := stampFiles(ref.Files) // best-effort; missing stamps just skip the fast path next time
 	m := meta{
 		SchemaVersion: metaSchemaVersion,
 		Checksum:      checksum,
 		SourceFiles:   ref.Files,
+		SourceStamps:  stamps,
 		ArchivedAt:    time.Now().UTC(),
 		Summary:       s.Summary(),
 	}
@@ -129,10 +163,24 @@ func (a *Archive) List(ctx context.Context, f ports.Filter) ([]model.Summary, er
 		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	if f.Offset > 0 {
+		if f.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[f.Offset:]
+	}
 	if f.Limit > 0 && len(out) > f.Limit {
 		out = out[:f.Limit]
 	}
 	return out, nil
+}
+
+// Count returns how many sessions match a filter, ignoring Offset/Limit.
+// Used by paginated callers to compute total pages.
+func (a *Archive) Count(ctx context.Context, f ports.Filter) (int, error) {
+	f.Offset, f.Limit = 0, 0
+	sums, err := a.List(ctx, f)
+	return len(sums), err
 }
 
 // Resolve expands a session id prefix or suffix into a full unique id.
@@ -226,6 +274,42 @@ func (a *Archive) readMeta(dir string) (meta, error) {
 	}
 	err = json.Unmarshal(data, &m)
 	return m, err
+}
+
+// stampFiles records cheap (size, mtime) fingerprints for the source files,
+// sorted by path so equality checks are order-independent.
+func stampFiles(files []string) ([]fileStamp, error) {
+	sorted := append([]string(nil), files...)
+	sort.Strings(sorted)
+	out := make([]fileStamp, 0, len(sorted))
+	for _, f := range sorted {
+		st, err := os.Stat(f)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, fileStamp{Path: f, Size: st.Size(), Mtime: st.ModTime().UTC()})
+	}
+	return out, nil
+}
+
+// stampsEqual is true when both slices describe the same set of files at the
+// same size and mtime. An empty `old` (e.g. archive created before stamps
+// existed) never matches, forcing the hash check.
+func stampsEqual(cur, old []fileStamp) bool {
+	if len(cur) == 0 || len(cur) != len(old) {
+		return false
+	}
+	idx := make(map[string]fileStamp, len(old))
+	for _, s := range old {
+		idx[s.Path] = s
+	}
+	for _, s := range cur {
+		o, ok := idx[s.Path]
+		if !ok || o.Size != s.Size || !o.Mtime.Equal(s.Mtime) {
+			return false
+		}
+	}
+	return true
 }
 
 // checksumFiles hashes every file's content with blake3 and combines the

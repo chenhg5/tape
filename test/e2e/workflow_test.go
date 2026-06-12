@@ -41,21 +41,29 @@ func TestFullWorkflow(t *testing.T) {
 	// 4. CJK search hits the codex session
 	d = e.mustRun(0, "search", "构建速度").data(t)
 	hits := d["hits"].([]any)
-	if len(hits) != 1 {
+	if len(hits) < 1 {
 		t.Fatalf("CJK search hits = %d", len(hits))
 	}
-	hit := hits[0].(map[string]any)
-	if !strings.HasPrefix(hit["session_id"].(string), "codex/") {
-		t.Errorf("hit = %v", hit)
+	// Find the body-text hit (the @meta row may appear too, with a different snippet).
+	var bodyHit map[string]any
+	for _, h := range hits {
+		m := h.(map[string]any)
+		if strings.Contains(m["snippet"].(string), "构建速度") {
+			bodyHit = m
+			break
+		}
 	}
-	if !strings.Contains(hit["snippet"].(string), "构建速度") {
-		t.Errorf("snippet = %v", hit["snippet"])
+	if bodyHit == nil {
+		t.Fatalf("no body-text hit for 构建速度: %v", hits)
+	}
+	if !strings.HasPrefix(bodyHit["session_id"].(string), "codex/") {
+		t.Errorf("hit = %v", bodyHit)
 	}
 
 	// 5. latin search hits the claude session
 	d = e.mustRun(0, "search", "stateless").data(t)
-	if len(d["hits"].([]any)) != 1 {
-		t.Errorf("latin search hits = %v", d["count"])
+	if n := len(d["hits"].([]any)); n < 1 {
+		t.Errorf("latin search hits = %v", n)
 	}
 
 	// 6. search miss: exit 3 and machine-readable empty result

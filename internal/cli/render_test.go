@@ -46,7 +46,7 @@ func TestRenderHitsBasic(t *testing.T) {
 		{SessionID: "cursor/abcd1234-bbbb", Agent: "cursor", Project: "p",
 			Title: "Doc advisor", Role: "tool", Snippet: "备份 方案"},
 	}
-	out := captureStdout(t, func() { renderHits(app, hits, "备份") })
+	out := captureStdout(t, func() { renderHits(app, hits, "备份", 1, false) })
 
 	// the two codex hits share a single header row
 	if strings.Count(out, "codex/019e970a") != 1 {
@@ -70,7 +70,7 @@ func TestRenderHitsCollapsesWhitespace(t *testing.T) {
 		{SessionID: "codex/x", Agent: "codex", Role: "user",
 			Snippet: "line1\n\n\tline2     line3"},
 	}
-	out := captureStdout(t, func() { renderHits(app, hits, "") })
+	out := captureStdout(t, func() { renderHits(app, hits, "", 1, false) })
 	if strings.Contains(out, "\n\n\t") || strings.Contains(out, "line2     ") {
 		t.Errorf("whitespace not collapsed:\n%s", out)
 	}
@@ -112,7 +112,7 @@ func TestRenderSessionList(t *testing.T) {
 		{ID: "claude-code/abc-y", Agent: "claude-code", Project: "p2",
 			Title: "T2", MsgCount: 5, UpdatedAt: now.Add(-48 * time.Hour)},
 	}
-	out := captureStdout(t, func() { renderSessionList(app, sums) })
+	out := captureStdout(t, func() { renderSessionList(app, sums, 1, 20, len(sums)) })
 	for _, want := range []string{"ID", "AGENT", "UPDATED", "MSGS", "TITLE", "codex/019ea0af", "T1", "T2", "2 session(s)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)

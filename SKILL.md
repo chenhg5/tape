@@ -38,15 +38,31 @@ tape sync --remote user@host       # also pull from an SSH machine
 
 ```bash
 tape search "jwt refactor" --limit 5
-tape search "为什么不用 oauth2" --project . --since 30d --agent claude-code
+tape search "为什么不用 oauth2" --dir . --since 30d --agent claude-code
+tape search codex                  # also matches by agent / title / project
+tape search "memory leak" --sort relevance   # classic BM25 ranking
 ```
 
-Each hit has `session_id`, `snippet`, `title`, `project`, `timestamp`.
+Default sort is `recent` — newest session first, capped at 5 hits per
+session so one long conversation can't push fresher matches off the
+page. Use `--sort relevance` for classic BM25 ranking when mining old
+archives. Each hit has `session_id`, `snippet`, `title`, `project`,
+`timestamp`. Every session also has a synthetic `@meta` row in the index
+so agent names, session titles and project names are searchable too.
+Every session has a synthetic `@meta` row in the index, so agent names,
+session titles and project names are searchable too — useful for `"all my
+codex sessions about auth"` style queries. Combine with `--agent` /
+`--dir` for precise filtering. `--dir <path>` (use `.` for the current
+directory) narrows by the session's working directory.
+
+**Paginate** large result sets — both `ls` and `search` accept `--limit N
+--page P` (1-based) and return `page`, `page_size`, `has_more`, `total`
+(ls only) in JSON. Iterate until `has_more` is `false`.
 
 **Read a session**:
 
 ```bash
-tape ls --project . --since 7d     # list; ids accept any unique fragment
+tape ls --dir . --since 7d         # list; ids accept any unique fragment
 tape show <session-id>             # full session with messages
 tape overview                      # archive-wide stats
 ```
@@ -60,17 +76,36 @@ tape restore <session-id> --to codex             # returns resume_command
 tape restore @last --to cursor --strategy brief --llm none   # handoff file
 ```
 
-Native restore (claude-code ↔ codex) returns a `resume_command` to run.
-Brief restore writes a handoff markdown file and returns a `start_command`;
-`--llm none` is deterministic (no subprocess LLM call).
+**Agents must always pass `<session-id>` and `--to`.** Run with no args
+*only* on a real TTY; in that case tape opens a numbered picker (session
+→ target agent → strategy). Piped or `--json` invocations always demand
+both args and exit 2 otherwise, so scripts stay deterministic.
+
+Strategies, highest fidelity first:
+
+| Strategy     | What it does                                                                                              | Best for                              |
+|--------------|-----------------------------------------------------------------------------------------------------------|---------------------------------------|
+| `native`     | Rewrites as a real session of the target agent; returns a `resume_command`. claude-code ↔ codex only.     | Same-agent-family resume              |
+| `memory`     | Writes a full transcript and `@`-references it from `CLAUDE.md` / `AGENTS.md` so the agent auto-loads it. | Cross-agent resume that "just works"  |
+| `transcript` | Writes the full verbatim conversation as markdown; user/agent reads on demand.                            | When you don't want to touch memory files |
+| `brief`      | LLM-condensed handoff. `--llm none` falls back to a deterministic template.                               | Token-constrained handoffs            |
+
+`auto` (default) picks `native` if the target supports it, otherwise
+`memory`. For agents the recommended call is explicit, e.g.
+`tape restore @last --to cursor --strategy memory --json`.
 
 **Back up** (push is blocked if the secret scan finds anything):
 
 ```bash
 tape backup scan                   # exit 0 = clean, exit 1 = secrets found
-tape backup push --remote <git-url>
-tape backup export --output archive.tar.zst   # redacted snapshot
+tape backup push --remote <git-url>             # git, incremental by nature
+tape backup export --output archive.tar.zst     # full redacted snapshot
+tape backup export --since 24h --output incr.tar.zst  # incremental snapshot
 ```
+
+`push` uses git, so only changed blobs travel after the first commit.
+`export` writes a self-contained `.tar.zst`; `--since` shrinks it to just
+the sessions updated within the given window.
 
 ## Conventions
 
@@ -78,5 +113,10 @@ tape backup export --output archive.tar.zst   # redacted snapshot
   `@last` means the most recent session.
 - `--dry-run` first for anything that writes (restore, backup push/export).
 - All timestamps are RFC 3339; `--since` accepts `24h`, `7d`, `2026-01-31`.
-- The archive lives in `$TAPE_DIR` (default `~/.tape`); pass `--dir` to use
-  another location without touching the environment.
+- The archive lives in `$TAPE_HOME` (default `~/.tape`; legacy `$TAPE_DIR`
+  is still honored). There is no `--dir` for tape's storage location on
+  purpose: `--dir` on `ls`/`search`/`restore` filters by the *project*
+  directory, not tape's data dir.
+- Subcommand names accept any unambiguous prefix (`tape sy` → sync,
+  `tape sho` → show, `tape re` → restore). For agents, always spell out
+  the full name to stay forward-compatible if new commands are added.

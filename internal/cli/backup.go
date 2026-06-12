@@ -13,7 +13,7 @@ import (
 	"github.com/chenhg5/tape/internal/redact"
 )
 
-func (a *App) archiveDir() string { return filepath.Join(a.dir, "archive") }
+func (a *App) archiveDir() string { return filepath.Join(a.home, "archive") }
 
 func newBackupCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
@@ -98,9 +98,23 @@ func newBackupPullCmd(app *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := app.rebuildIndex(cmd)
+			ix, err := app.Index()
 			if err != nil {
 				return err
+			}
+			if m, ok := ix.(indexMaintainer); ok {
+				if err := m.Reset(cmd.Context()); err != nil {
+					return err
+				}
+			}
+			n, err := app.rebuildIndex(cmd, ix)
+			if err != nil {
+				return err
+			}
+			if m, ok := ix.(indexMaintainer); ok {
+				if err := m.MarkBuilt(cmd.Context()); err != nil {
+					return err
+				}
 			}
 			res.Note = fmt.Sprintf("%s; reindexed %d session(s)", res.Note, n)
 			return printResult(app, res, nil)
@@ -111,20 +125,38 @@ func newBackupPullCmd(app *App) *cobra.Command {
 }
 
 func newBackupExportCmd(app *App) *cobra.Command {
-	var output string
+	var output, since string
 	var noRedact, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export the archive as a redacted .tar.zst artifact",
 		Long: `Writes a compressed snapshot of the archive. Secrets are replaced with
-[REDACTED:<rule>] inside the artifact; local archive files are never touched.`,
-		Example: "  tape backup export --output tape-archive.tar.zst",
-		Args:    cobra.NoArgs,
+[REDACTED:<rule>] inside the artifact; local archive files are never touched.
+
+Use --since 24h / --since 7d / --since 2026-01-01 to write a smaller
+incremental snapshot containing only sessions updated in that window. The
+artifact stays a self-contained tar.zst; restoring it into an existing
+archive merges by session id.`,
+		Example: `  tape backup export --output tape-archive.tar.zst
+  tape backup export --since 24h --output tape-incr.tar.zst`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sinceTime, err := parseSince(since)
+			if err != nil {
+				return err
+			}
+			pb := app.newProgress("export", 0)
 			opts := ports.BackupOpts{
 				ArchiveDir:  app.archiveDir(),
 				Destination: output,
 				DryRun:      dryRun,
+				Since:       sinceTime,
+				OnProgress: func(done, total int64, path string) {
+					if pb.total != total {
+						pb.SetTotal(total)
+					}
+					pb.Update(done, path)
+				},
 			}
 			if !noRedact {
 				opts.RedactCopy = func(path string, data []byte) []byte {
@@ -137,6 +169,7 @@ func newBackupExportCmd(app *App) *cobra.Command {
 				}
 			}
 			res, err := tarball.Target{}.Push(cmd.Context(), opts)
+			pb.Done("")
 			if err != nil {
 				return err
 			}
@@ -150,6 +183,7 @@ func newBackupExportCmd(app *App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&output, "output", "tape-archive.tar.zst", "output file path")
+	cmd.Flags().StringVar(&since, "since", "", "only include sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "keep secrets verbatim in the artifact")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing (exit 10 on success)")
 	return cmd

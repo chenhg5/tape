@@ -96,9 +96,10 @@ func TestBackupGitRoundTrip(t *testing.T) {
 		t.Fatalf("pull result: %v", res)
 	}
 
-	// the restored archive is immediately searchable
+	// the restored archive is immediately searchable. The hit count is
+	// >=1 (one for the message body, optionally one for the @meta row).
 	d = e2.mustRun(0, "search", "构建速度").data(t)
-	if d["count"] != float64(1) {
+	if d["count"].(float64) < 1 {
 		t.Errorf("search on restored machine: %v", d["count"])
 	}
 }

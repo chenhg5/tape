@@ -8,3 +8,6 @@ coverage.out
 
 # build artifacts
 dist/
+
+# scratch artifacts from `tape backup export` runs in the repo root
+*.tar.zst

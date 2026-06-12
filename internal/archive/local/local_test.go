@@ -201,6 +201,62 @@ func TestProjectSlugMigrationDropsDuplicate(t *testing.T) {
 	}
 }
 
+// Stale must short-circuit on identical size+mtime without re-hashing.
+// We prove the fast path is in use by stubbing checksumFiles for the
+// second Stale call (the test relies on the package-internal helper
+// stampsEqual, exercised here through the public surface).
+func TestStaleFastPath(t *testing.T) {
+	a := New(t.TempDir())
+	ctx := context.Background()
+	src := t.TempDir()
+	f := writeSourceFile(t, src, "s.jsonl", "abc\n")
+	ref := ports.SessionRef{Agent: "codex", SourceID: "fast", Files: []string{f}}
+
+	_, sum, _ := a.Stale(ref)
+	if err := a.Put(ctx, demoSession("codex", "fast", "/p", 1), ref, sum); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replace contents but keep size+mtime — the fast path should declare
+	// the ref unchanged. We bend reality on purpose: in real life the
+	// agents only ever append to their session files, so a no-op append
+	// would update mtime and force a rehash. This proves the cheap path
+	// trusts the stamp.
+	st, _ := os.Stat(f)
+	if err := os.WriteFile(f, []byte("xyz\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(f, st.ModTime(), st.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	stale, returnedSum, err := a.Stale(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale {
+		t.Fatalf("matching stamp should short-circuit, got stale=%v", stale)
+	}
+	if returnedSum == "" {
+		t.Errorf("fast path must still return last known checksum, got empty")
+	}
+
+	// And bumping mtime forces a re-hash that now sees the new content.
+	later := st.ModTime().Add(2 * time.Second)
+	if err := os.Chtimes(f, later, later); err != nil {
+		t.Fatal(err)
+	}
+	stale, newSum, err := a.Stale(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stale {
+		t.Fatalf("mtime change must trigger rehash and report stale")
+	}
+	if newSum == sum {
+		t.Errorf("checksum should differ after content change")
+	}
+}
+
 func TestChecksumStability(t *testing.T) {
 	dir := t.TempDir()
 	a := writeSourceFile(t, dir, "a", "AAA")

@@ -108,14 +108,13 @@ Tape mirrors the agent directories over plain `ssh` + `tar` (nothing to install 
 | Command | What it does |
 |---|---|
 | `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines) |
-| `tape ls` | List archived sessions (`--agent`, `--project .`, `--since 7d`) |
+| `tape ls` | List archived sessions (`--agent`, `--dir .`, `--since 7d`) |
 | `tape search <query>` | Full-text search across everything |
 | `tape show <id>` | Replay a session (`--full` includes tool output) |
 | `tape overview` | Dashboard: agents, activity sparkline, top projects, recent sessions |
 | `tape restore <id> --to <agent>` | Continue a session in another agent |
 | `tape backup push / pull` | Sync the archive with a private git remote |
 | `tape backup export / scan` | Redacted tarball snapshot / standalone secret scan |
-| `tape index rebuild` | Regenerate the search index from the archive |
 | `tape schema [command]` | Introspect the CLI as JSON (for agents) |
 
 Session ids never need to be typed in full — any unique fragment resolves (`tape show 7dd2afaf`), and `@last` refers to the most recent session.
@@ -125,10 +124,14 @@ Session ids never need to be typed in full — any unique fragment resolves (`ta
 ```bash
 tape search "race condition" --agent codex --since 30d --limit 10
 tape search "会话备份"          # CJK queries just work
-tape search "auth" --project . # only this project's sessions
+tape search "auth" --dir .     # only this project's sessions
 ```
 
-Most session-search tools tokenize for English only and silently fail on CJK text. Tape tokenizes latin text by word (with prefix matching) and CJK text by overlapping character bigrams, indexed in SQLite FTS5 with BM25 ranking. Search hits show the matching snippet, not just the session.
+Most session-search tools tokenize for English only and silently fail on CJK text. Tape tokenizes latin text by word (with prefix matching) and CJK text by overlapping character bigrams, indexed in SQLite FTS5. Each session also gets a synthetic `@meta` row containing its agent, title and project, so queries like `tape search codex` or `tape search "auth migration"` reach the session even when no message body uses those words. Search hits show the matching snippet, not just the session.
+
+Default sort is **`recent`** — newest session first, capped at five hits per session so a chatty old conversation can't push fresh matches off the page. Pass `--sort relevance` for classic BM25 ranking (handy when mining old archives for a rare term).
+
+`ls` and `search` both paginate: `--limit N --page P` (1-based). JSON output carries `page`, `page_size`, `has_more` (plus `total` for `ls`) so scripts and agents can stream through the archive without parsing the human footer.
 
 ## Restoring sessions across agents
 
@@ -149,13 +152,21 @@ Two strategies, chosen automatically:
 ## Backing up
 
 ```bash
-tape backup push --remote git@github.com:you/tape-archive.git  # archive-as-git-repo
-tape backup pull --remote ...        # fresh machine: clone + rebuild index
-tape backup export --output a.tar.zst # compressed, redacted snapshot
-tape backup scan                     # what would leak if I pushed this?
+tape backup push  --remote git@github.com:you/tape-archive.git  # archive-as-git-repo (incremental via git)
+tape backup pull  --remote ...                                  # fresh machine: clone + rebuild index
+tape backup export --output a.tar.zst                           # full compressed, redacted snapshot
+tape backup export --since 24h --output a-incr.tar.zst          # incremental snapshot (last 24h)
+tape backup scan                                                # what would leak if I pushed this?
 ```
 
+Two backup styles, both incremental in the way each medium expects:
+
+- **`push` (git)** — only changed blobs travel after the first commit; that's git, by design. The archive on disk *is* the working tree.
+- **`export` (tar.zst)** — writes a self-contained, redacted artifact. Use `--since 24h` (or `7d`, `2026-01-01`) to ship just the sessions updated within the window; the resulting tarball merges back into any archive by session id.
+
 Real API keys end up in coding sessions more often than you think — scan yours. The secret scanner (AWS, GitHub, OpenAI, Anthropic, Slack, JWT, private keys, …) runs before every push and **blocks on findings** unless you pass `--allow-secrets`. `export` replaces secrets with `[REDACTED:<rule>]` inside the artifact; your local files are never modified.
+
+Sync is incremental too — a session is rehashed (and re-archived) only when its source files change size or mtime; the blake3 checksum stays the source of truth when stamps disagree. Sync also keeps the search index in sync with the archive: if you delete `~/.tape/index` or upgrade tape's tokenizer, the next `tape sync` quietly rebuilds it for you. No `index rebuild` command to remember.
 
 ## Agent & script mode
 

@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,12 @@ import (
 )
 
 const schemaVersion = 1
+
+// Prefix matching lets users type any unambiguous prefix of a subcommand:
+// `tape sy` → sync, `tape sho` → show, `tape se` → search. Ambiguous
+// prefixes (e.g. `s` matches sync/search/show/schema) fall through to
+// cobra's "did you mean" output.
+func init() { cobra.EnablePrefixMatching = true }
 
 // ErrNoResults maps to exit code 3 so agents can branch on "found nothing"
 // without parsing output.
@@ -71,6 +78,15 @@ Examples:
 Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
 `
 
+// App holds process-wide state for a single CLI invocation.
+//
+// home is where tape stores its own state (archive + index). Users almost
+// never need to think about it; the default ~/.tape is right for everyone
+// who does not multi-tenant. We deliberately do NOT expose it as a flag
+// because it has nothing to do with the project the user is working on —
+// the flag `--dir` in ls/search refers to the project directory instead,
+// matching the user's mental model ("I want my sessions for this repo").
+// To relocate the archive, set TAPE_HOME=/somewhere/else.
 type App struct {
 	Sources []ports.Source
 	// SourceFactory builds the source set for any home directory; used to
@@ -78,7 +94,7 @@ type App struct {
 	SourceFactory func(home string) []ports.Source
 	Version       string
 
-	dir      string
+	home     string
 	jsonOut  bool
 	archive  *local.Archive
 	indexImp *sqlitefts.Index
@@ -86,20 +102,58 @@ type App struct {
 
 func (a *App) Archive() *local.Archive {
 	if a.archive == nil {
-		a.archive = local.New(filepath.Join(a.dir, "archive"))
+		a.archive = local.New(filepath.Join(a.home, "archive"))
 	}
 	return a.archive
 }
 
 func (a *App) Index() (ports.Index, error) {
 	if a.indexImp == nil {
-		ix, err := sqlitefts.Open(filepath.Join(a.dir, "index", "tape.db"))
+		ix, err := sqlitefts.Open(filepath.Join(a.home, "index", "tape.db"))
 		if err != nil {
 			return nil, err
 		}
 		a.indexImp = ix
 	}
 	return a.indexImp, nil
+}
+
+// resolveSessionID expands the user-facing id reference into the canonical
+// "<agent>/<full-uuid>" form the archive layer expects. It accepts:
+//
+//   - "@last" — the most recently updated session
+//   - "<agent>/<uuid>" — already canonical, returned as-is
+//   - any unique id fragment — resolved against the archive
+//
+// Centralized here so every command (show, restore, ...) accepts the
+// same shorthand without re-implementing the lookup.
+func (a *App) resolveSessionID(ctx context.Context, ref string) (string, error) {
+	if ref == "@last" {
+		sums, err := a.Archive().List(ctx, ports.Filter{Limit: 1})
+		if err != nil {
+			return "", err
+		}
+		if len(sums) == 0 {
+			return "", ErrNoResults
+		}
+		return sums[0].ID, nil
+	}
+	return a.Archive().Resolve(ctx, ref)
+}
+
+// resolveHome picks where tape keeps its archive. Priority:
+//  1. $TAPE_HOME       (preferred name; "tape's home directory")
+//  2. $TAPE_DIR        (kept for backward compatibility with older docs/tests)
+//  3. ~/.tape          (the only path 99% of users ever see)
+func resolveHome() string {
+	if v := os.Getenv("TAPE_HOME"); v != "" {
+		return v
+	}
+	if v := os.Getenv("TAPE_DIR"); v != "" {
+		return v
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".tape")
 }
 
 func (a *App) Close() {
@@ -144,12 +198,7 @@ you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return usageError{err}
 	})
-	defaultDir := os.Getenv("TAPE_DIR")
-	if defaultDir == "" {
-		home, _ := os.UserHomeDir()
-		defaultDir = filepath.Join(home, ".tape")
-	}
-	root.PersistentFlags().StringVar(&app.dir, "dir", defaultDir, "tape data directory (env: TAPE_DIR)")
+	app.home = resolveHome()
 	root.PersistentFlags().BoolVar(&app.jsonOut, "json", false, "machine-readable JSON output")
 
 	root.AddCommand(

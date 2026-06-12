@@ -14,8 +14,18 @@ import (
 //   - colors only on a TTY and when NO_COLOR/TERM=dumb are absent
 
 func stdoutIsTTY() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
+func stdinIsTTY() bool  { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 func (a *App) useJSON() bool { return a.jsonOut || !stdoutIsTTY() }
+
+// interactive reports whether we can safely ask the user a question:
+// both stdin and stdout must be a TTY (so they see prompts AND can type),
+// --json must be off, and NO_COLOR/TERM=dumb don't matter — prompts work
+// in plain ASCII too. Agents and piped runs always answer "no", which
+// keeps their error path strict and scriptable.
+func (a *App) interactive() bool {
+	return !a.jsonOut && stdoutIsTTY() && stdinIsTTY()
+}
 
 func (a *App) useColor() bool {
 	if !stdoutIsTTY() {
@@ -49,20 +59,29 @@ func (a *App) brand(xterm256 int, s string) string {
 	return a.paint(fmt.Sprintf("38;5;%d", xterm256), s)
 }
 
-// agentColor paints the agent name in a color that evokes that agent's
-// own visual identity, so rows group visually:
+// Agent brand palette. Picked from the xterm-256 cube so the colors stay
+// crisp on dark and light terminals alike; the previous (173/105) pair felt
+// too saturated against the white-on-black output of most agents.
 //
-//	claude-code → xterm 173  warm crail orange     (Anthropic)
-//	codex       → xterm 105  dreamy periwinkle     (≈ #808fef)
-//	cursor      → xterm 250  geek gray             (Cursor's monochrome IDE feel)
+//	claude-code → xterm 216  light peach     (≈ #ffaf87, washed Anthropic orange)
+//	codex       → xterm 189  pale periwinkle (≈ #d7d7ff, faded dreamy violet)
+//	cursor      → xterm 252  silver-gray     (≈ #d0d0d0, Cursor monochrome IDE)
+const (
+	colorClaude = 216
+	colorCodex  = 189
+	colorCursor = 252
+)
+
+// agentColor paints the agent name in its brand color so rows group visually
+// without dominating the line.
 func (a *App) agentColor(agent string) string {
 	switch agent {
 	case "claude-code":
-		return a.brand(173, agent)
+		return a.brand(colorClaude, agent)
 	case "codex":
-		return a.brand(105, agent)
+		return a.brand(colorCodex, agent)
 	case "cursor":
-		return a.brand(250, agent)
+		return a.brand(colorCursor, agent)
 	default:
 		return a.yellow(agent)
 	}
@@ -84,6 +103,8 @@ func (e cliError) Error() string {
 }
 
 // reportError writes the error to stderr, as JSON when in robot mode.
+// In human mode a cliError's Suggestion is broken onto its own line with
+// a "try:" prefix so multi-sentence hints stay scannable.
 func (a *App) reportError(err error) {
 	if a.useJSON() {
 		var ce cliError
@@ -94,6 +115,11 @@ func (a *App) reportError(err error) {
 			ce = cliError{Type: "error", Message: err.Error()}
 		}
 		json.NewEncoder(os.Stderr).Encode(ce)
+		return
+	}
+	if ce, ok := err.(cliError); ok && ce.Suggestion != "" {
+		fmt.Fprintf(os.Stderr, "%s %s\n", a.red("tape:"), ce.Message)
+		fmt.Fprintf(os.Stderr, "  %s %s\n", a.gray("try:"), ce.Suggestion)
 		return
 	}
 	fmt.Fprintln(os.Stderr, "tape:", err)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -108,6 +109,51 @@ func TestExportDryRun(t *testing.T) {
 func TestPushRequiresOutput(t *testing.T) {
 	if _, err := (Target{}).Push(context.Background(), ports.BackupOpts{ArchiveDir: t.TempDir()}); err == nil {
 		t.Error("missing destination must error")
+	}
+}
+
+// --since produces a smaller, incremental tarball containing only sessions
+// updated within the window.
+func TestExportIncrementalSince(t *testing.T) {
+	ctx := context.Background()
+	src := t.TempDir()
+
+	// "old" session: updated 3 days ago; "new": now
+	seed(t, src, map[string]string{
+		"codex/p/old/session.json": `{"hi":"old"}`,
+		"codex/p/old/raw/x.jsonl":  "old",
+		"codex/p/old/meta.json":    `{"summary":{"updated_at":"2025-01-01T00:00:00Z"}}`,
+		"codex/p/new/session.json": `{"hi":"new"}`,
+		"codex/p/new/raw/y.jsonl":  "new",
+		"codex/p/new/meta.json":    `{"summary":{"updated_at":"2099-01-01T00:00:00Z"}}`,
+	})
+	out := filepath.Join(t.TempDir(), "incr.tar.zst")
+
+	since := time.Date(2050, 1, 1, 0, 0, 0, 0, time.UTC)
+	res, err := (Target{}).Push(ctx, ports.BackupOpts{
+		ArchiveDir: src, Destination: out, Since: since,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Action != "export-incremental" {
+		t.Errorf("action = %q, want export-incremental", res.Action)
+	}
+	// only the new session's three files (session/meta/raw) should travel
+	if res.Changed != 3 {
+		t.Errorf("incremental count = %d, want 3", res.Changed)
+	}
+
+	// extract and confirm: only new/* is present
+	dst := t.TempDir()
+	if _, err := (Target{}).Pull(ctx, ports.BackupOpts{ArchiveDir: dst, Destination: out}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "codex/p/new/session.json")); err != nil {
+		t.Errorf("new session missing from incremental tar: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "codex/p/old/session.json")); err == nil {
+		t.Errorf("old session leaked into incremental tar")
 	}
 }
 

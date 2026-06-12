@@ -9,12 +9,13 @@ import (
 // letters of TAPE literally are Tape · Anthropic · Codex · ...everyone's
 // session in one place. The 'E' stays neutral cream.
 //
-// xterm-256 indices (matched to official hex):
+// xterm-256 indices, intentionally on the light side so the banner glows
+// against dark terminals without screaming:
 //
-//	T → 173 (#d7875f ≈ #d97757 Anthropic Crail)
-//	A → 36  (#00af87 ≈ #10a37f OpenAI green)
-//	P → 202 (#ff5f00 ≈ #f54e00 Cursor ember)
-//	E → 230 (cream)
+//	T → 216 (#ffaf87 washed Anthropic orange)
+//	A → 189 (#d7d7ff pale Codex periwinkle)
+//	P → 252 (#d0d0d0 Cursor silver)
+//	E → 230 (#ffffd7 tape cream)
 //
 // Drops back to gray when colors are off.
 func banner(app *App, version string) string {
@@ -53,13 +54,14 @@ func banner(app *App, version string) string {
 		},
 	}
 	// Brand-aligned 256-color palette, one per letter:
-	//   T → 173  Anthropic Crail orange   (#d7875f ≈ #d97757)
-	//   A → 105  Codex dreamy periwinkle  (#8787ff ≈ #808fef)
-	//   P → 250  Cursor geek gray         (#bcbcbc)
-	//   E → 230  Tape cream               (#ffffd7)
-	colors := []int{173, 105, 250, 230}
+	//   T → 216  light peach      (Anthropic, washed)
+	//   A → 189  pale periwinkle  (Codex)
+	//   P → 252  silver           (Cursor)
+	//   E → 230  cream            (Tape)
+	colors := []int{colorClaude, colorCodex, colorCursor, 230}
 
 	var b strings.Builder
+	b.WriteByte('\n') // breathing room above the wordmark
 	for row := 0; row < 6; row++ {
 		b.WriteString("  ")
 		for i, letter := range letters {

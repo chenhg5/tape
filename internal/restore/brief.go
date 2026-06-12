@@ -29,6 +29,42 @@ func Brief(ctx context.Context, s *model.Session, runner llm.Runner) (doc string
 	return templateBrief(s), "template", nil
 }
 
+// Transcript renders the entire conversation verbatim as Markdown. No
+// summarization, no LLM call: the next agent gets every user request,
+// every assistant reply and every tool call exactly as they happened.
+// Ideal when fidelity matters more than token cost.
+func Transcript(s *model.Session) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Session transcript (restored by tape from %s)\n\n", s.ID)
+	fmt.Fprintf(&b, "- **agent:** `%s`  **cwd:** `%s`  **branch:** `%s`\n", s.Agent, s.CWD, s.GitBranch)
+	fmt.Fprintf(&b, "- **span:** %s → %s, %d messages\n\n",
+		s.StartedAt.Format("2006-01-02 15:04"),
+		s.UpdatedAt.Format("2006-01-02 15:04"),
+		len(s.Messages))
+	b.WriteString("> Continue this work where the conversation below leaves off.\n\n---\n\n")
+	for _, m := range s.Messages {
+		switch m.Role {
+		case model.RoleUser:
+			if m.Text != "" {
+				fmt.Fprintf(&b, "### 👤 User\n\n%s\n\n", m.Text)
+			}
+		case model.RoleAssistant:
+			if m.Text != "" {
+				fmt.Fprintf(&b, "### 🤖 Assistant\n\n%s\n\n", m.Text)
+			}
+			for _, tc := range m.ToolCalls {
+				fmt.Fprintf(&b, "<details><summary>🔧 %s</summary>\n\n```\n%s\n```\n",
+					tc.Name, clip(tc.Input, 4000))
+				if tc.Output != "" {
+					fmt.Fprintf(&b, "\n**output:**\n\n```\n%s\n```\n", clip(tc.Output, 4000))
+				}
+				b.WriteString("\n</details>\n\n")
+			}
+		}
+	}
+	return b.String()
+}
+
 func briefPrompt(s *model.Session) string {
 	var b strings.Builder
 	b.WriteString(`You are writing a handoff document so that a different AI coding agent can seamlessly continue this coding session. Write in the language the user used. Output ONLY the markdown document, with these sections:

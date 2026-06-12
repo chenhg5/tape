@@ -62,7 +62,7 @@ func TestRemoteSync(t *testing.T) {
 
 	// remote session is searchable like any other
 	d = e.mustRun(0, "search", "构建速度").data(t)
-	if d["count"] != float64(1) {
+	if d["count"].(float64) < 1 {
 		t.Fatalf("remote session not searchable: %v", d["count"])
 	}
 

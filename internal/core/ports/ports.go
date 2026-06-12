@@ -39,6 +39,7 @@ type Filter struct {
 	Project string // matches project slug prefix or cwd substring
 	Since   time.Time
 	Limit   int
+	Offset  int
 }
 
 // Archive is the durable session store: byte-for-byte raw copies plus the
@@ -59,6 +60,13 @@ type Query struct {
 	Project string
 	Since   time.Time
 	Limit   int
+	Offset  int
+	// Sort selects the order of results:
+	//   "" / "recent"   — newest session first, in-session by message ts ASC
+	//   "relevance"     — BM25 across all messages (long sessions win)
+	// Default is "recent" because users usually want "the conversation I had
+	// just now" rather than "the one that mentions the term the most".
+	Sort string
 }
 
 type Hit struct {
@@ -85,9 +93,15 @@ type BackupOpts struct {
 	Destination string // git remote URL, tarball path, ... target-specific
 	Message     string
 	DryRun      bool
+	// Since restricts the export to sessions updated at/after this time.
+	// Zero = full snapshot (the default).
+	Since time.Time
 	// RedactCopy, when non-nil, transforms file contents on the way into
 	// the backup artifact. Local archive files are never modified.
 	RedactCopy func(path string, data []byte) []byte
+	// OnProgress is called as each file is added/extracted. total may be
+	// -1 when unknown (streaming).
+	OnProgress func(done, total int64, path string)
 }
 
 type BackupResult struct {

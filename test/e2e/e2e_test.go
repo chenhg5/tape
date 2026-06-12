@@ -47,11 +47,11 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// env is one isolated tape installation: its own HOME and TAPE_DIR.
+// env is one isolated tape installation: its own HOME and TAPE_HOME.
 type env struct {
 	t        *testing.T
 	home     string
-	dir      string // TAPE_DIR
+	dir      string // TAPE_HOME (tape's archive/index live here)
 	pathPrep string // prepended to PATH (for stub binaries like ssh)
 }
 
@@ -66,6 +66,13 @@ func newEnv(t *testing.T) *env {
 }
 
 func (e *env) run(args ...string) result {
+	return e.runEnv(nil, args...)
+}
+
+// runEnv lets a test override (or unset, by passing "") specific env vars
+// for one invocation; useful for exercising TAPE_HOME / TAPE_DIR fallbacks
+// without spinning up a whole new env fixture.
+func (e *env) runEnv(extra map[string]string, args ...string) result {
 	e.t.Helper()
 	cmd := exec.Command(tapeBin, args...)
 	environ := os.Environ()
@@ -76,11 +83,24 @@ func (e *env) run(args ...string) result {
 			}
 		}
 	}
-	cmd.Env = append(environ,
+	base := append(environ,
 		"HOME="+e.home,
-		"TAPE_DIR="+e.dir,
+		"TAPE_HOME="+e.dir,
 		"NO_COLOR=1",
 	)
+	for k, v := range extra {
+		// Drop any existing entry for k so the override wins regardless of
+		// how Go's exec resolves duplicates on the current platform.
+		filtered := base[:0]
+		prefix := k + "="
+		for _, kv := range base {
+			if !strings.HasPrefix(kv, prefix) {
+				filtered = append(filtered, kv)
+			}
+		}
+		base = append(filtered, k+"="+v)
+	}
+	cmd.Env = base
 	var out, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errBuf
 	err := cmd.Run()

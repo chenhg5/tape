@@ -9,42 +9,49 @@ import (
 	"github.com/chenhg5/tape/internal/core/ports"
 )
 
-// renderHits prints search results grouped by session, with the matching
-// query highlighted in snippets. Layout per hit:
+// hitsPerSession caps how many matching messages are shown per session,
+// so one chatty conversation can't dominate the screen. The full hit list
+// is still in --json output.
+const hitsPerSession = 3
+
+// renderHits prints search results grouped by session. Layout:
 //
-//	▸ <session-id>  <agent>  <relative-time>
-//	  <title>
+//	▸ <session-id>  <agent>  <relative-time>  ·  <title>
 //	    <role>  <snippet with query highlighted>
+//	    <role>  <snippet with query highlighted>
+//	    <gray>  + N more in this session
 //
-// Sessions with multiple matching messages share one header.
-func renderHits(app *App, hits []ports.Hit, query string) {
-	type bySession struct {
-		first ports.Hit
-		more  []ports.Hit
+//	▸ <next session>
+//	    ...
+//
+// Sessions appear in the order the index returned them (newest-first by
+// default, BM25 when --sort relevance is set).
+func renderHits(app *App, hits []ports.Hit, query string, page int, hasMore bool) {
+	type group struct {
+		hits []ports.Hit
 	}
-	groups := make(map[string]*bySession)
+	groups := make(map[string]*group)
 	order := []string{}
 	for _, h := range hits {
 		g, ok := groups[h.SessionID]
 		if !ok {
-			g = &bySession{first: h}
+			g = &group{}
 			groups[h.SessionID] = g
 			order = append(order, h.SessionID)
-			continue
 		}
-		g.more = append(g.more, h)
+		g.hits = append(g.hits, h)
 	}
 
 	for i, id := range order {
 		g := groups[id]
-		h := g.first
+		h := g.hits[0]
 		title := h.Title
 		if title == "" {
 			title = h.Project
 		}
 		when := relTime(h.Timestamp)
 		if h.Timestamp.IsZero() {
-			when = "" // some adapters don't carry per-message timestamps
+			when = ""
 		}
 		header := fmt.Sprintf("%s %s  %s",
 			app.gray("▸"),
@@ -53,28 +60,43 @@ func renderHits(app *App, hits []ports.Hit, query string) {
 		if when != "" {
 			header += "  " + app.gray(when)
 		}
-		fmt.Println(header)
 		if title != "" {
-			fmt.Printf("  %s\n", truncDisp(title, 76))
+			header += "  " + app.gray("·") + "  " + app.dim(truncDisp(title, 56))
 		}
-		all := append([]ports.Hit{h}, g.more...)
-		for _, hh := range all {
+		fmt.Println(header)
+
+		shown := g.hits
+		if len(shown) > hitsPerSession {
+			shown = shown[:hitsPerSession]
+		}
+		for _, hh := range shown {
 			fmt.Printf("    %s  %s\n",
-				app.dim(padRightDisp(hh.Role, 9)),
+				app.cyan(padRightDisp(hh.Role, 9)),
 				highlightSnippet(app, hh.Snippet, query, 100))
+		}
+		if extra := len(g.hits) - len(shown); extra > 0 {
+			fmt.Printf("    %s\n",
+				app.gray(fmt.Sprintf("+ %d more match(es) — tape show %s",
+					extra, shortID(h.SessionID))))
 		}
 		if i < len(order)-1 {
 			fmt.Println()
 		}
 	}
+
 	sessionCount := len(order)
 	noun := "session"
 	if sessionCount != 1 {
 		noun = "sessions"
 	}
-	fmt.Printf("\n%s\n", app.gray(fmt.Sprintf(
-		"%d hit(s) in %d %s. tape show <id> to replay.",
-		len(hits), sessionCount, noun)))
+	footer := fmt.Sprintf("%d hit(s) in %d %s", len(hits), sessionCount, noun)
+	if page > 1 || hasMore {
+		footer += fmt.Sprintf("  ·  page %d", page)
+	}
+	if hasMore {
+		footer += fmt.Sprintf("  ·  --page %d for more", page+1)
+	}
+	fmt.Printf("\n%s\n", app.gray(footer+".  tape show <id> to replay."))
 }
 
 // highlightSnippet collapses whitespace, truncates around the query match
@@ -136,13 +158,29 @@ func caseInsensitiveReplace(s, old, replacement string) string {
 }
 
 func newSearchCmd(app *App) *cobra.Command {
-	var agent, project, since string
-	var limit int
+	var agent, dir, since, sort string
+	var limit, page int
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Full-text search across all archived sessions",
-		Long:  "Search every archived session. Latin words match by prefix; Chinese/Japanese/Korean text is matched by character bigrams, so CJK queries just work.",
-		Args:  cobra.MinimumNArgs(1),
+		Long: `Search every archived session. Latin words match by prefix; Chinese,
+Japanese and Korean text is matched by character bigrams, so CJK queries
+just work.
+
+Results are ordered newest-session-first (--sort recent, default) because
+the most useful match is usually "the conversation I just had". Switch to
+--sort relevance for classic BM25 ranking when you are mining old archives.`,
+		Example: `  tape search "auth migration"
+  tape search codex --agent cursor
+  tape search "memory leak" --sort relevance --limit 50`,
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return usageErrf("missing search query. try:\n" +
+					"  tape search \"auth migration\"\n" +
+					"  tape search codex          (matches by agent, title or content)")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t, err := parseSince(since)
 			if err != nil {
@@ -152,21 +190,44 @@ func newSearchCmd(app *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if page < 1 {
+				return usageErrf("--page must be >= 1")
+			}
+			if limit < 1 {
+				return usageErrf("--limit must be >= 1")
+			}
+			switch sort {
+			case "", "recent", "relevance":
+			default:
+				return usageErrf("--sort must be 'recent' or 'relevance'")
+			}
+			dir = resolveDirFilter(dir)
+			// over-fetch by one to detect "has more" without a separate count
+			// query (FTS COUNT(*) over the same MATCH would be expensive).
 			hits, err := ix.Search(cmd.Context(), ports.Query{
 				Text:    strings.Join(args, " "),
 				Agent:   agent,
-				Project: project,
+				Project: dir,
 				Since:   t,
-				Limit:   limit,
+				Sort:    sort,
+				Limit:   limit + 1,
+				Offset:  (page - 1) * limit,
 			})
 			if err != nil {
 				return err
 			}
+			hasMore := len(hits) > limit
+			if hasMore {
+				hits = hits[:limit]
+			}
 			if app.useJSON() {
 				if hits == nil {
-					hits = []ports.Hit{} // JSON [] not null
+					hits = []ports.Hit{}
 				}
-				if err := emitJSON(map[string]any{"hits": hits, "count": len(hits)}); err != nil {
+				if err := emitJSON(map[string]any{
+					"hits": hits, "count": len(hits),
+					"page": page, "page_size": limit, "has_more": hasMore,
+				}); err != nil {
 					return err
 				}
 				if len(hits) == 0 {
@@ -177,13 +238,15 @@ func newSearchCmd(app *App) *cobra.Command {
 			if len(hits) == 0 {
 				return ErrNoResults
 			}
-			renderHits(app, hits, strings.Join(args, " "))
+			renderHits(app, hits, strings.Join(args, " "), page, hasMore)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent")
-	cmd.Flags().StringVar(&project, "project", "", "filter by project path")
+	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
-	cmd.Flags().IntVar(&limit, "limit", 20, "max hits")
+	cmd.Flags().StringVar(&sort, "sort", "recent", "result order: 'recent' (newest session first) or 'relevance' (BM25)")
+	cmd.Flags().IntVar(&limit, "limit", 20, "page size")
+	cmd.Flags().IntVar(&page, "page", 1, "page number (1-based)")
 	return cmd
 }

@@ -6,11 +6,14 @@ package tarball
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -26,15 +29,31 @@ func (t Target) Push(ctx context.Context, opts ports.BackupOpts) (*ports.BackupR
 	if out == "" {
 		return nil, fmt.Errorf("tar target needs --output <file.tar.zst>")
 	}
-	count := 0
-	if opts.DryRun {
-		err := walkFiles(opts.ArchiveDir, func(string, string) error { count++; return nil })
-		if err != nil {
-			return nil, err
-		}
-		return &ports.BackupResult{Target: "tar", Action: "export", Changed: count,
-			Note: fmt.Sprintf("dry run: would write %d file(s) to %s", count, out)}, nil
+	// keep is used to scope the export. When opts.Since is non-zero,
+	// we include only session directories whose meta.json shows
+	// updated_at >= Since; this gives users a cheap incremental snapshot.
+	keep, err := buildKeepFilter(opts.ArchiveDir, opts.Since)
+	if err != nil {
+		return nil, err
 	}
+	// pre-scan once so progress has a denominator and dry runs are cheap
+	var total int64
+	if err := walkFiles(opts.ArchiveDir, func(_, rel string) error {
+		if keep(rel) {
+			total++
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if opts.DryRun {
+		note := fmt.Sprintf("dry run: would write %d file(s) to %s", total, out)
+		if !opts.Since.IsZero() {
+			note += fmt.Sprintf(" (incremental since %s)", opts.Since.UTC().Format(time.RFC3339))
+		}
+		return &ports.BackupResult{Target: "tar", Action: "export", Changed: int(total), Note: note}, nil
+	}
+	count := 0
 
 	f, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -48,6 +67,9 @@ func (t Target) Push(ctx context.Context, opts ports.BackupOpts) (*ports.BackupR
 	tw := tar.NewWriter(zw)
 
 	err = walkFiles(opts.ArchiveDir, func(path, rel string) error {
+		if !keep(rel) {
+			return nil
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -63,9 +85,14 @@ func (t Target) Push(ctx context.Context, opts ports.BackupOpts) (*ports.BackupR
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
-		_, err = tw.Write(data)
+		if _, err := tw.Write(data); err != nil {
+			return err
+		}
 		count++
-		return err
+		if opts.OnProgress != nil {
+			opts.OnProgress(int64(count), total, rel)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -76,7 +103,68 @@ func (t Target) Push(ctx context.Context, opts ports.BackupOpts) (*ports.BackupR
 	if err := zw.Close(); err != nil {
 		return nil, err
 	}
-	return &ports.BackupResult{Target: "tar", Action: "export", Changed: count, Ref: out}, nil
+	action := "export"
+	note := ""
+	if !opts.Since.IsZero() {
+		action = "export-incremental"
+		note = fmt.Sprintf("included sessions updated since %s", opts.Since.UTC().Format(time.RFC3339))
+	}
+	return &ports.BackupResult{Target: "tar", Action: action, Changed: count, Ref: out, Note: note}, nil
+}
+
+// buildKeepFilter returns a predicate that reports whether a relative path
+// from the archive root should be included in the tarball. When since is
+// zero the filter is identity (include everything). Otherwise we walk the
+// archive once, read every meta.json, and keep only paths under sessions
+// whose updated_at >= since.
+func buildKeepFilter(root string, since time.Time) (func(rel string) bool, error) {
+	if since.IsZero() {
+		return func(string) bool { return true }, nil
+	}
+	keep := map[string]struct{}{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != "meta.json" {
+			if d != nil && d.IsDir() && d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return err
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil // ignore broken entries
+		}
+		var m struct {
+			Summary struct {
+				UpdatedAt time.Time `json:"updated_at"`
+			} `json:"summary"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil
+		}
+		if m.Summary.UpdatedAt.Before(since) {
+			return nil
+		}
+		dir, err := filepath.Rel(root, filepath.Dir(p))
+		if err == nil {
+			keep[filepath.ToSlash(dir)] = struct{}{}
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		err = nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return func(rel string) bool {
+		rel = filepath.ToSlash(rel)
+		for d := range keep {
+			if rel == d || strings.HasPrefix(rel, d+"/") {
+				return true
+			}
+		}
+		return false
+	}, nil
 }
 
 func (t Target) Pull(ctx context.Context, opts ports.BackupOpts) (*ports.BackupResult, error) {

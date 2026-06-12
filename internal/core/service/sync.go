@@ -58,6 +58,11 @@ type Sync struct {
 	Sources []ports.Source
 	Archive ports.Archive
 	Index   ports.Index
+	// OnSourceStart fires once per source after Detect+List finished, with
+	// the number of refs about to be processed; on every archived session
+	// OnSessionDone fires with the running counter for that source.
+	OnSourceStart func(agent, host string, total int)
+	OnSessionDone func(agent, host string, done, total int, sessionID string)
 }
 
 // Run archives new or changed sessions from every detected source.
@@ -91,12 +96,26 @@ func (s *Sync) runSource(ctx context.Context, src ports.Source, since time.Time)
 		return rep
 	}
 	rep.Scanned = len(refs)
-	for _, ref := range refs {
+	if s.OnSourceStart != nil {
+		host := ""
+		if h, ok := src.(Hosted); ok {
+			host = h.Host()
+		}
+		s.OnSourceStart(src.Name(), host, len(refs))
+	}
+	for i, ref := range refs {
 		if ctx.Err() != nil {
 			return rep
 		}
 		if err := s.syncOne(ctx, src, ref, &rep); err != nil {
 			rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", ref.ID(), err))
+		}
+		if s.OnSessionDone != nil {
+			host := ""
+			if h, ok := src.(Hosted); ok {
+				host = h.Host()
+			}
+			s.OnSessionDone(src.Name(), host, i+1, len(refs), ref.ID())
 		}
 	}
 	return rep

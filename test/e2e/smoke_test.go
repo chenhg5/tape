@@ -75,10 +75,16 @@ func TestSmokeSchemaIsValidJSON(t *testing.T) {
 	for _, c := range envelope.Data.Subcommands {
 		names[c.Name] = true
 	}
-	for _, want := range []string{"sync", "ls", "search", "show", "overview", "backup", "restore", "index", "schema"} {
+	// `index` is intentionally hidden — the user-facing surface is
+	// `sync`, which self-heals the index. The hidden command still works
+	// (see TestHiddenIndexRebuildStillRuns) but does not advertise.
+	for _, want := range []string{"sync", "ls", "search", "show", "overview", "backup", "restore", "schema"} {
 		if !names[want] {
 			t.Errorf("schema missing command %q", want)
 		}
+	}
+	if names["index"] {
+		t.Errorf("hidden command 'index' should not appear in schema listing")
 	}
 }
 

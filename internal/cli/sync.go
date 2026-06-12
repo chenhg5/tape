@@ -91,12 +91,21 @@ ones. Remote sessions carry a "host" meta field.`,
 				return err
 			}
 
+			// Transparent self-heal: if the on-disk index was built by an
+			// older indexer (different tokenizer, no @meta row, no tool
+			// outputs, etc.), wipe and rebuild it before adding any new
+			// sessions. Users should never have to remember `tape index
+			// rebuild` — `sync` makes the index match the archive.
+			if err := app.maybeRebuildIndex(cmd, ix); err != nil {
+				return err
+			}
+
 			sources := app.Sources
 			for _, host := range remotes {
 				if app.SourceFactory == nil {
 					return fmt.Errorf("remote sync not wired (no source factory)")
 				}
-				m := &remote.Mirror{Host: host, Dir: remote.HostDir(app.dir, host)}
+				m := &remote.Mirror{Host: host, Dir: remote.HostDir(app.home, host)}
 				if !app.useJSON() {
 					fmt.Fprintf(os.Stderr, "mirroring %s…\n", host)
 				}
@@ -108,8 +117,24 @@ ones. Remote sessions carry a "host" meta field.`,
 				}
 			}
 
-			sync := &service.Sync{Sources: sources, Archive: app.Archive(), Index: ix}
+			pb := app.newProgress("syncing", 0)
+			sync := &service.Sync{
+				Sources: sources, Archive: app.Archive(), Index: ix,
+				OnSourceStart: func(agent, host string, total int) {
+					label := agent
+					if host != "" {
+						label = agent + "@" + host
+					}
+					pb.label = label
+					pb.current = 0
+					pb.SetTotal(int64(total))
+				},
+				OnSessionDone: func(_, _ string, done, _ int, id string) {
+					pb.Update(int64(done), id)
+				},
+			}
 			report, err := sync.Run(cmd.Context(), t)
+			pb.Done("")
 			if err != nil {
 				return err
 			}

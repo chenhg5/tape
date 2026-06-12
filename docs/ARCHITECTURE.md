@@ -418,7 +418,7 @@ M3 后增量交付:
 |---|---|---|
 | 单元测试 | 各包 `*_test.go` | 纯函数与边界:分词/截断的 UTF-8 安全、UUID 格式、varint、redact 规则逐条触发 + 占位符误报控制、flexInt64 容错 |
 | 集成测试 | `archive/local`、`backup/*`、`index/sqlitefts`、`llm` | 真实文件系统/真实 git 二进制/真实 SQLite;LLM runner 用 PATH 桩脚本模拟三家 CLI;sync 编排用 fake 三件套验证错误隔离 |
-| E2E | `test/e2e/` | 编译真实二进制,在伪造 `$HOME`(三家 agent 夹具)+ 独立 `TAPE_DIR` 下驱动完整旅程:sync→ls→search(中英文)→show→restore(native 双向/brief/dry-run)→backup(secret 门禁/git 容灾演练/导出脱敏校验),逐一断言退出码、JSON 信封与 stderr 错误对象 |
+| E2E | `test/e2e/` | 编译真实二进制,在伪造 `$HOME`(三家 agent 夹具)+ 独立 `TAPE_HOME` 下驱动完整旅程:sync→ls→search(中英文)→show→restore(native 双向/brief/dry-run)→backup(secret 门禁/git 容灾演练/导出脱敏校验),逐一断言退出码、JSON 信封与 stderr 错误对象 |
 | 冒烟 | `make smoke`(`go test -short`) | E2E 的快速子集(~1s):help/version/schema/空机 sync/usage 错误 |
 
 门禁(任一失败即阻塞):`gofmt` → `go vet` → `-race` 全量测试 → 单测覆盖率下限(60%)→ 冒烟 → E2E → 五平台交叉编译。E2E 另以 `-cover` 插桩二进制产出进程级覆盖率报告(`make cover-e2e`),与单测覆盖互补(CLI 命令层主要由 E2E 覆盖)。

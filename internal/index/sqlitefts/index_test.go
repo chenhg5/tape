@@ -2,6 +2,7 @@ package sqlitefts
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +42,19 @@ func TestIndexSearchCJKAndLatin(t *testing.T) {
 		}
 		if len(hits) == 0 {
 			t.Errorf("search %q: want hits, got none", q)
+		}
+	}
+
+	// The synthetic meta row puts agent/title/project into the index, so
+	// `search codex` or `search "auth design"` find the session even when
+	// the body of the messages never spells them out.
+	for _, q := range []string{"claude-code", "auth design", "demo"} {
+		hits, err := ix.Search(ctx, ports.Query{Text: q})
+		if err != nil {
+			t.Fatalf("meta search %q: %v", q, err)
+		}
+		if len(hits) == 0 {
+			t.Errorf("meta search %q: want at least 1 hit (synthetic @meta row)", q)
 		}
 	}
 
@@ -140,6 +154,158 @@ func TestSearchToolCallNamesAreIndexed(t *testing.T) {
 	hits, err := ix.Search(ctx, ports.Query{Text: "kubernetes"})
 	if err != nil || len(hits) != 1 {
 		t.Errorf("tool input not searchable: %v %v", hits, err)
+	}
+}
+
+// Tool outputs are where most of the "evidence" lives in agent
+// conversations (file reads, shell results). Without them in the index,
+// search misses anything the assistant only saw via tool feedback —
+// which is what was wrong with the original 'tape search codex' bug.
+func TestSearchToolCallOutputsAreIndexed(t *testing.T) {
+	ix, err := Open(filepath.Join(t.TempDir(), "tape.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	ctx := context.Background()
+	s := &model.Session{
+		ID: "codex/t2", Agent: "codex", SourceID: "t2",
+		Messages: []model.Message{{
+			ID: "m1", Role: model.RoleAssistant,
+			ToolCalls: []model.ToolCall{{
+				Name:   "Read",
+				Input:  `{"path":"main.go"}`,
+				Output: "package main\n\n// orchestrates kubernetes operators",
+			}},
+		}},
+	}
+	if err := ix.Upsert(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"orchestrates", "package", "operators"} {
+		hits, err := ix.Search(ctx, ports.Query{Text: q})
+		if err != nil {
+			t.Fatalf("search %q: %v", q, err)
+		}
+		if len(hits) == 0 {
+			t.Errorf("tool output not searchable for %q", q)
+		}
+	}
+}
+
+// A fresh index never needs a rebuild; an index populated by an older
+// version does; after MarkBuilt it doesn't again. This is what lets
+// `tape sync` self-heal without anyone needing to know the index exists.
+func TestWantsRebuildLifecycle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tape.db")
+	ix, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	ctx := context.Background()
+
+	// brand-new install, no sessions yet → no rebuild needed
+	if need, err := ix.WantsRebuild(ctx); err != nil || need {
+		t.Fatalf("empty index wantsRebuild=%v err=%v", need, err)
+	}
+
+	// simulate "indexed by an older version": data present, no marker
+	now := time.Now().UTC()
+	sess := &model.Session{
+		ID: "codex/x1", Agent: "codex", SourceID: "x1",
+		StartedAt: now, UpdatedAt: now,
+		Messages: []model.Message{{ID: "m", Role: model.RoleUser, Text: "hi", Timestamp: now}},
+	}
+	if err := ix.Upsert(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	if need, err := ix.WantsRebuild(ctx); err != nil || !need {
+		t.Fatalf("legacy-populated index wantsRebuild=%v err=%v", need, err)
+	}
+
+	// after marking, it's up to date
+	if err := ix.MarkBuilt(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if need, err := ix.WantsRebuild(ctx); err != nil || need {
+		t.Fatalf("marked index wantsRebuild=%v err=%v", need, err)
+	}
+
+	// reset wipes both sessions and fts rows
+	if err := ix.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hits, _ := ix.Search(ctx, ports.Query{Text: "hi"})
+	if len(hits) != 0 {
+		t.Errorf("Reset left %d rows behind", len(hits))
+	}
+}
+
+// Two key properties of the default sort:
+//  1. Newest session shows up first, even if an older session has more
+//     matches (the original 'tape search codex' UX bug).
+//  2. A single chatty session can't consume the whole result page;
+//     SQL caps each session at maxHitsPerSession.
+func TestSearchRecentSortAndPerSessionCap(t *testing.T) {
+	ix, err := Open(filepath.Join(t.TempDir(), "tape.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	ctx := context.Background()
+
+	put := func(id, agent string, when time.Time, n int) {
+		msgs := make([]model.Message, n)
+		for i := 0; i < n; i++ {
+			msgs[i] = model.Message{
+				ID: fmt.Sprintf("m%d", i), Role: model.RoleAssistant,
+				Text: "needle codex needle " + fmt.Sprintf("%d", i),
+				// in-session order: older messages first
+				Timestamp: when.Add(time.Duration(i) * time.Second),
+			}
+		}
+		s := &model.Session{
+			ID: agent + "/" + id, Agent: agent, SourceID: id,
+			Title: id, StartedAt: when, UpdatedAt: when.Add(time.Duration(n) * time.Second),
+			Messages: msgs,
+		}
+		if err := ix.Upsert(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// older session crammed with matches; newer session with just one
+	put("old", "claude-code", time.Now().Add(-72*time.Hour), 50)
+	put("new", "cursor", time.Now().Add(-1*time.Hour), 1)
+
+	hits, err := ix.Search(ctx, ports.Query{Text: "codex", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("no hits")
+	}
+	if hits[0].SessionID != "cursor/new" {
+		t.Errorf("default sort should put newest session first, got %q", hits[0].SessionID)
+	}
+	perSession := map[string]int{}
+	for _, h := range hits {
+		perSession[h.SessionID]++
+	}
+	if perSession["claude-code/old"] > maxHitsPerSession {
+		t.Errorf("per-session cap broken: %d", perSession["claude-code/old"])
+	}
+	if perSession["cursor/new"] < 1 {
+		t.Errorf("newest session must appear in default sort: %v", perSession)
+	}
+
+	// --sort relevance restores BM25 ordering — the chatty session usually wins
+	hitsR, err := ix.Search(ctx, ports.Query{Text: "codex", Limit: 20, Sort: "relevance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hitsR) == 0 || hitsR[0].SessionID != "claude-code/old" {
+		t.Errorf("relevance sort should let the chatty session bubble up, got %v", hitsR[0])
 	}
 }
 

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -88,17 +90,60 @@ func printIndented(s string) {
 
 func newShowCmd(app *App) *cobra.Command {
 	var full bool
+	var dir string
 	cmd := &cobra.Command{
-		Use:     "show <session-id>",
+		Use:     "show [session-id]",
 		Aliases: []string{"play"},
 		Short:   "Replay an archived session",
-		Args:    cobra.ExactArgs(1),
+		Long: `Pretty-prints a session: metadata header, then every message in
+order, color-coded by role. Tool outputs are folded by default — pass
+--full to see them in their entirety.
+
+Run with no arguments on a TTY to pick the session from a numbered
+menu (scoped to the current directory by default; use --dir "" for
+all). Piped or --json runs always demand <session-id>.`,
+		Example: `  tape show                          # interactive on a TTY
+  tape show @last
+  tape show 7dd2afaf                 # any unique id fragment works
+  tape show codex/019ea0af --full`,
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return usageErrf("show takes at most one session id (got %d)", len(args))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := app.Archive().Resolve(cmd.Context(), args[0])
+			var id string
+			switch {
+			case len(args) == 1:
+				id = args[0]
+			case app.interactive():
+				// Same --dir semantics as restore: unset = cwd, "" = all.
+				var scope string
+				if cmd.Flag("dir").Changed {
+					scope = resolveDirFilter(dir)
+				} else if wd, err := os.Getwd(); err == nil {
+					scope = wd
+				}
+				picked, err := pickSession(cmd.Context(), app, scope, "Pick a session to show:")
+				if err != nil {
+					if errors.Is(err, errPromptAborted) {
+						return usageErrf("cancelled")
+					}
+					return err
+				}
+				id = picked.ID
+			default:
+				return usageErrf("missing session id. try:\n" +
+					"  tape show @last           (most recent session)\n" +
+					"  tape show <id-fragment>   (e.g. 7dd2afaf)\n" +
+					"run 'tape ls' to see available sessions")
+			}
+			canonical, err := app.resolveSessionID(cmd.Context(), id)
 			if err != nil {
 				return err
 			}
-			s, err := app.Archive().Get(cmd.Context(), id)
+			s, err := app.Archive().Get(cmd.Context(), canonical)
 			if err != nil {
 				return err
 			}
@@ -110,6 +155,7 @@ func newShowCmd(app *App) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "include tool outputs and untruncated text")
+	cmd.Flags().StringVar(&dir, "dir", "", "scope the interactive menu to a project directory (default: cwd; pass \"\" for all)")
 	return cmd
 }
 
