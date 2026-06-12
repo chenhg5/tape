@@ -48,11 +48,16 @@ func banner(app *App, version string) string {
 			"██╔════╝",
 			"█████╗  ",
 			"██╔══╝  ",
-			"██║     ",
+			"███████╗",
 			"╚══════╝",
 		},
 	}
-	colors := []int{173, 36, 202, 230}
+	// Brand-aligned 256-color palette, one per letter:
+	//   T → 173  Anthropic Crail Orange  (#d7875f ≈ #d97757)
+	//   A → 141  Codex dreamy violet     (#af87ff)
+	//   P → 250  Cursor geek gray        (#bcbcbc)
+	//   E → 230  Tape cream              (#ffffd7)
+	colors := []int{173, 141, 250, 230}
 
 	var b strings.Builder
 	for row := 0; row < 6; row++ {

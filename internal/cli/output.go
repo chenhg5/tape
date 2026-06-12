@@ -43,24 +43,26 @@ func (a *App) magenta(s string) string { return a.paint("35", s) }
 func (a *App) red(s string) string     { return a.paint("31", s) }
 func (a *App) gray(s string) string    { return a.paint("90", s) }
 
-// brand colors: 256-color matches for the three agents' official hex.
-// claude (#d97757) → xterm 173 ≈ #d7875f
-// codex  (#10a37f) → xterm 36  ≈ #00af87
-// cursor (#f54e00) → xterm 202 ≈ #ff5f00
+// brand wraps s in a 256-color SGR escape; falls back to plain text when
+// colors are off (NO_COLOR, non-TTY, etc.).
 func (a *App) brand(xterm256 int, s string) string {
 	return a.paint(fmt.Sprintf("38;5;%d", xterm256), s)
 }
 
-// agentColor paints the agent name in that agent's own brand color so
-// rows group visually and the output feels native to each tool.
+// agentColor paints the agent name in a color that evokes that agent's
+// own visual identity, so rows group visually:
+//
+//	claude-code → xterm 173  warm crail orange     (Anthropic)
+//	codex       → xterm 141  dreamy violet         (Codex / GPT-5 vibe)
+//	cursor      → xterm 250  geek gray             (Cursor's monochrome IDE feel)
 func (a *App) agentColor(agent string) string {
 	switch agent {
 	case "claude-code":
-		return a.brand(173, agent) // Anthropic Crail orange #d97757
+		return a.brand(173, agent)
 	case "codex":
-		return a.brand(36, agent) // OpenAI green #10a37f
+		return a.brand(141, agent)
 	case "cursor":
-		return a.brand(202, agent) // Cursor Ember orange #f54e00
+		return a.brand(250, agent)
 	default:
 		return a.yellow(agent)
 	}
