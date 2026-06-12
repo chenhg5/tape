@@ -1,0 +1,38 @@
+{
+  "name": "__PACKAGE__",
+  "version": "__VERSION__",
+  "description": "Record, search and replay your AI coding sessions (Claude Code, Codex, Cursor). Nothing gets lost on tape.",
+  "keywords": [
+    "ai",
+    "agent",
+    "claude-code",
+    "codex",
+    "cursor",
+    "session",
+    "backup",
+    "search",
+    "cli"
+  ],
+  "homepage": "https://github.com/chenhg5/tape#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chenhg5/tape.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "tape": "tape.js"
+  },
+  "files": [
+    "tape.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "__PACKAGE__-linux-x64": "__VERSION__",
+    "__PACKAGE__-linux-arm64": "__VERSION__",
+    "__PACKAGE__-darwin-x64": "__VERSION__",
+    "__PACKAGE__-darwin-arm64": "__VERSION__",
+    "__PACKAGE__-win32-x64": "__VERSION__"
+  }
+}

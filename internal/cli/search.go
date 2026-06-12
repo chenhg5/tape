@@ -37,6 +37,9 @@ func newSearchCmd(app *App) *cobra.Command {
 				return err
 			}
 			if app.useJSON() {
+				if hits == nil {
+					hits = []ports.Hit{} // JSON [] not null
+				}
 				if err := emitJSON(map[string]any{"hits": hits, "count": len(hits)}); err != nil {
 					return err
 				}

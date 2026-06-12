@@ -49,9 +49,10 @@ func TestMain(m *testing.M) {
 
 // env is one isolated tape installation: its own HOME and TAPE_DIR.
 type env struct {
-	t    *testing.T
-	home string
-	dir  string // TAPE_DIR
+	t        *testing.T
+	home     string
+	dir      string // TAPE_DIR
+	pathPrep string // prepended to PATH (for stub binaries like ssh)
 }
 
 type result struct {
@@ -67,7 +68,15 @@ func newEnv(t *testing.T) *env {
 func (e *env) run(args ...string) result {
 	e.t.Helper()
 	cmd := exec.Command(tapeBin, args...)
-	cmd.Env = append(os.Environ(),
+	environ := os.Environ()
+	if e.pathPrep != "" {
+		for i, kv := range environ {
+			if strings.HasPrefix(kv, "PATH=") {
+				environ[i] = "PATH=" + e.pathPrep + ":" + strings.TrimPrefix(kv, "PATH=")
+			}
+		}
+	}
+	cmd.Env = append(environ,
 		"HOME="+e.home,
 		"TAPE_DIR="+e.dir,
 		"NO_COLOR=1",

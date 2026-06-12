@@ -15,12 +15,19 @@ type SyncReport struct {
 
 type SourceReport struct {
 	Agent    string   `json:"agent"`
+	Host     string   `json:"host,omitempty"` // set for SSH-mirrored sources
 	Found    bool     `json:"found"`
 	DataDir  string   `json:"data_dir,omitempty"`
 	Scanned  int      `json:"scanned"`
 	Archived int      `json:"archived"`
 	Skipped  int      `json:"skipped"`
 	Errors   []string `json:"errors,omitempty"`
+}
+
+// Hosted is implemented by sources that read data mirrored from another
+// machine; the host shows up in sync reports.
+type Hosted interface {
+	Host() string
 }
 
 func (r SyncReport) Archived() int {
@@ -66,6 +73,9 @@ func (s *Sync) Run(ctx context.Context, since time.Time) (SyncReport, error) {
 
 func (s *Sync) runSource(ctx context.Context, src ports.Source, since time.Time) SourceReport {
 	rep := SourceReport{Agent: src.Name()}
+	if h, ok := src.(Hosted); ok {
+		rep.Host = h.Host()
+	}
 	found, dir, err := src.Detect(ctx)
 	if err != nil {
 		rep.Errors = append(rep.Errors, fmt.Sprintf("detect: %v", err))

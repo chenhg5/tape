@@ -396,6 +396,11 @@ tape stats
 | **M3 恢复** | `brief` 策略(LLMRunner: claude/codex/cursor CLI)、`native` 策略(claude↔codex 双向)、`restore/rewind` | Claude 会话在 Codex 原生 resume 成功;失败可降级 | ✅ claude→codex 原生 resume 实测成功;brief(codex 总结)与模板降级验证 |
 | **M4 记忆与 agent 化** | Extractor(llm/rule)、`memory`、`ask`、`stats`、MCP server、`init --agents-md` | 任意 agent 通过 MCP 查询历史并拿到交接文档 | 待做 |
 
+M3 后增量交付:
+
+- **SSH 远端同步**(`tape sync --remote user@host`):`internal/remote` 把远端 `$HOME` 下的 agent 会话目录镜像到 `~/.tape/remotes/<host>/`,传输用 `ssh + tar`(远端零依赖,尊重 `~/.ssh/config`);首次全量,之后用 `tar --newer-mtime` 增量(留 1 小时余量,归档 checksum 兜底去重),老 tar 不支持该旗标时自动回退全量。镜像目录复用本地同一套解析器(`App.SourceFactory(home)`),`remote.WrapSource` 给会话打 `meta.host` 标记并在 sync 报告中带 `host` 字段。Go 侧解 tar 流,带路径穿越防护。
+- **npm 分发**(`npm/` + `scripts/release-npm.sh`):esbuild 式平台分包——主包(JS launcher,透传语义退出码)通过 `optionalDependencies` 按平台拉取预编译二进制包(5 平台,`os`/`cpu` 字段约束),无 postinstall 下载。`release-npm.sh <version> [latest|beta]` 一键构建+发布,dist-tag 区分正式/beta(`npm i -g agent-tape@beta`);包名经 `NPM_PACKAGE` 可配(npm 上 `tape`、`tape-cli` 已被占,`agent-tape` / `tape-agent` 可用)。
+
 实现中确定的关键细节(对原设计的细化):
 
 - **备份即仓库**:git 目标直接把 `~/.tape/archive` 变成 git 仓库,remote 存在仓库自身的 git config 里,tape 无需额外配置状态;

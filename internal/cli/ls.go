@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
 )
 
@@ -41,6 +42,9 @@ func newLsCmd(app *App) *cobra.Command {
 				return err
 			}
 			if app.useJSON() {
+				if sums == nil {
+					sums = []model.Summary{} // JSON [] not null
+				}
 				if err := emitJSON(map[string]any{"sessions": sums, "count": len(sums)}); err != nil {
 					return err
 				}

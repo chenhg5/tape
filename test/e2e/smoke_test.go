@@ -94,6 +94,9 @@ func TestSmokeSyncOnEmptyMachine(t *testing.T) {
 	if r.data(t)["count"] != float64(0) {
 		t.Errorf("ls count = %v", r.data(t)["count"])
 	}
+	if sessions, ok := r.data(t)["sessions"].([]any); !ok || len(sessions) != 0 {
+		t.Errorf("empty sessions must be [] not null: %v", r.data(t)["sessions"])
+	}
 	if r.errJSON(t)["error"] != "no_results" {
 		t.Errorf("stderr error = %v", r.errJSON(t))
 	}

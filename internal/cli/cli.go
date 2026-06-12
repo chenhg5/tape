@@ -46,7 +46,10 @@ const exitCodeHelp = `Exit codes:
 
 type App struct {
 	Sources []ports.Source
-	Version string
+	// SourceFactory builds the source set for any home directory; used to
+	// parse SSH-mirrored remote homes with the same parsers.
+	SourceFactory func(home string) []ports.Source
+	Version       string
 
 	dir      string
 	jsonOut  bool

@@ -19,13 +19,17 @@ func main() {
 	if err != nil {
 		os.Exit(cli.ExitError)
 	}
-	app := &cli.App{
-		Version: version,
-		Sources: []ports.Source{
+	factory := func(home string) []ports.Source {
+		return []ports.Source{
 			claudecode.New(home),
 			codex.New(home),
 			cursor.New(home),
-		},
+		}
+	}
+	app := &cli.App{
+		Version:       version,
+		Sources:       factory(home),
+		SourceFactory: factory,
 	}
 	os.Exit(cli.Execute(app))
 }

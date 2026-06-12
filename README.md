@@ -39,6 +39,7 @@ Resume it with:
 ## Highlights
 
 - **Own your history** — every session is archived as plain files under `~/.tape`, byte-for-byte raw copies included. No database lock-in, no cloud.
+- **All your machines** — `tape sync --remote user@host` pulls sessions from dev servers over plain SSH; nothing to install on the remote side.
 - **Search everything** — full-text search across all agents with BM25 ranking. CJK works: latin words *and* Chinese/Japanese/Korean bigrams are tokenized natively.
 - **Move between agents** — ran out of Claude tokens mid-task? `tape restore --to codex` rewrites the dialogue as a *native* session the target agent can `resume`.
 - **Back up safely** — `backup push` turns the archive into a git repo; a built-in secret scanner blocks pushes containing API keys. `backup export` produces a redacted `.tar.zst`.
@@ -61,6 +62,13 @@ Resume it with:
 - [License](#license)
 
 ## Installation
+
+With npm (prebuilt binaries, no Go required):
+
+```bash
+npm install -g agent-tape          # stable
+npm install -g agent-tape@beta     # beta channel
+```
 
 With Go 1.26+:
 
@@ -85,11 +93,21 @@ tape show <id>     # 4. replay it
 
 `tape sync` is safe to run any time — content checksums (blake3) make it incremental and idempotent. Add it to cron if you like.
 
+### Sync from other machines
+
+Sessions living on a dev server or a second laptop are one flag away:
+
+```bash
+tape sync --remote dev@build-server --remote user@10.0.0.7
+```
+
+Tape mirrors the agent directories over plain `ssh` + `tar` (nothing to install on the remote side, respects your `~/.ssh/config`), then archives them locally. Pulls are incremental after the first one, and remote sessions carry a `host` field so you always know where a conversation happened.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `tape sync` | Archive new/changed sessions from all agents |
+| `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines) |
 | `tape ls` | List archived sessions (`--agent`, `--project .`, `--since 7d`) |
 | `tape search <query>` | Full-text search across everything |
 | `tape show <id>` | Replay a session (`--full` includes tool output) |

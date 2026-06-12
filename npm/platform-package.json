@@ -1,0 +1,20 @@
+{
+  "name": "__PACKAGE__-__PLATFORM__",
+  "version": "__VERSION__",
+  "description": "Prebuilt tape binary for __PLATFORM__. Install __PACKAGE__ instead of this package.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chenhg5/tape.git"
+  },
+  "license": "MIT",
+  "preferUnplugged": true,
+  "files": [
+    "bin/"
+  ],
+  "os": [
+    "__OS__"
+  ],
+  "cpu": [
+    "__CPU__"
+  ]
+}
