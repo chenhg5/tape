@@ -1,87 +1,160 @@
-# Tape
+<div align="center">
 
-> Record, search and replay your AI coding sessions.
-> Nothing gets lost on tape.
+# tape
 
-You spend hours (and dollars) talking to Claude Code, Codex and Cursor. Those conversations are project knowledge — decisions, rejected approaches, the *why* behind the code. But they're scattered across vendor-specific formats, locked to one machine, and impossible to search.
+**Record, search and replay your AI coding sessions.**
 
-Tape treats your sessions as **data you own**:
+*Nothing gets lost on tape.*
 
-```bash
-tape sync                      # archive sessions from all agents into ~/.tape
-tape search "为什么不用 OAuth2"  # full-text search across every agent, CJK included
-tape show <id>                 # replay any archived session
+[![CI](https://github.com/chenhg5/tape/actions/workflows/ci.yml/badge.svg)](https://github.com/chenhg5/tape/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/chenhg5/tape.svg)](https://pkg.go.dev/github.com/chenhg5/tape)
+[![Go Report Card](https://goreportcard.com/badge/github.com/chenhg5/tape)](https://goreportcard.com/report/github.com/chenhg5/tape)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+</div>
+
+---
+
+You spend hours (and dollars) talking to **Claude Code**, **Codex** and **Cursor**. Those conversations are project knowledge — decisions made, approaches rejected, the *why* behind every line of code. But they are scattered across vendor-specific formats, locked to one machine, and impossible to search.
+
+Tape turns them into **data you own**:
+
+```console
+$ tape sync
+claude-code  scanned 124  archived 3   skipped 121
+codex        scanned 87   archived 1   skipped 86
+cursor       scanned 45   archived 2   skipped 43
+synced: 6 session(s) archived
+
+$ tape search "为什么不用 OAuth2"
+claude-code/7dd2afaf  Auth migration        …为什么不用 OAuth2 而是 JWT?…
+
+$ tape restore claude-code/7dd2afaf --to codex
+restored claude-code/7dd2afaf as a native codex session.
+Resume it with:
+
+  cd /root/code/demo && codex resume 019ebb66-899f-77cf-b66c-9009d4c5f09b
 ```
 
-## Supported agents
+## Highlights
 
-| Agent | Storage parsed |
-|---|---|
-| Claude Code | `~/.claude/projects/*/*.jsonl` |
-| Codex CLI | `~/.codex/sessions/**/rollout-*.jsonl` |
-| Cursor CLI | `~/.cursor/chats/*/*/store.db` |
+- **Own your history** — every session is archived as plain files under `~/.tape`, byte-for-byte raw copies included. No database lock-in, no cloud.
+- **Search everything** — full-text search across all agents with BM25 ranking. CJK works: latin words *and* Chinese/Japanese/Korean bigrams are tokenized natively.
+- **Move between agents** — ran out of Claude tokens mid-task? `tape restore --to codex` rewrites the dialogue as a *native* session the target agent can `resume`.
+- **Back up safely** — `backup push` turns the archive into a git repo; a built-in secret scanner blocks pushes containing API keys. `backup export` produces a redacted `.tar.zst`.
+- **Built for agents, too** — JSON output when piped, semantic exit codes, machine-readable errors, `--dry-run` everywhere, and `tape schema` for command introspection.
+- **Single binary** — pure Go, no CGO, no runtime dependencies. Linux / macOS / Windows.
 
-More sources are pluggable — each agent is a small adapter behind one interface.
+## Table of contents
 
-## Install
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Searching](#searching)
+- [Restoring sessions across agents](#restoring-sessions-across-agents)
+- [Backing up](#backing-up)
+- [Agent &amp; script mode](#agent--script-mode)
+- [How tape stores your data](#how-tape-stores-your-data)
+- [Supported agents](#supported-agents)
+- [Development](#development)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+## Installation
+
+With Go 1.26+:
 
 ```bash
 go install github.com/chenhg5/tape/cmd/tape@latest
 ```
 
-## Usage
+From source:
 
 ```bash
-tape sync                     # incremental: only new/changed sessions are archived
-tape ls --project .           # sessions of the current project, across all agents
-tape search "sandbox" --since 30d --limit 10
-tape show codex/019ea0af      # id prefixes work everywhere; --full includes tool output
+git clone https://github.com/chenhg5/tape && cd tape && make build
 ```
 
-### Continue a session in another agent
+## Quick start
 
 ```bash
-tape restore claude-code/04ebf6a4 --to codex
-# → restored as a native codex session. Resume it with:
-#     cd /root/code/demo && codex resume 019ebb66-899f-77cf-b66c-9009d4c5f09b
+tape sync          # 1. archive sessions from every installed agent (incremental)
+tape ls            # 2. see what you have
+tape search "..."  # 3. find that conversation from three weeks ago
+tape show <id>     # 4. replay it
 ```
 
-Two strategies, picked automatically:
+`tape sync` is safe to run any time — content checksums (blake3) make it incremental and idempotent. Add it to cron if you like.
 
-- **native** — rewrites the dialogue as a real session of the target agent, resumed with the agent's own `--resume`. Supported for claude-code ↔ codex.
-- **brief** — generates a handoff document (`tape restore <id> --to cursor`), summarized by whichever agent CLI you already have installed (`--llm claude|codex|cursor|none`); falls back to a deterministic template.
+## Commands
 
-### Back up everything
+| Command | What it does |
+|---|---|
+| `tape sync` | Archive new/changed sessions from all agents |
+| `tape ls` | List archived sessions (`--agent`, `--project .`, `--since 7d`) |
+| `tape search <query>` | Full-text search across everything |
+| `tape show <id>` | Replay a session (`--full` includes tool output) |
+| `tape restore <id> --to <agent>` | Continue a session in another agent |
+| `tape backup push / pull` | Sync the archive with a private git remote |
+| `tape backup export / scan` | Redacted tarball snapshot / standalone secret scan |
+| `tape index rebuild` | Regenerate the search index from the archive |
+| `tape schema [command]` | Introspect the CLI as JSON (for agents) |
+
+Session ids never need to be typed in full — any unique fragment resolves (`tape show 7dd2afaf`), and `@last` refers to the most recent session.
+
+## Searching
 
 ```bash
-tape backup push --remote git@github.com:you/tape-archive.git   # archive-as-git-repo
-tape backup pull --remote ...                                   # fresh machine: clone + reindex
-tape backup export --output tape-archive.tar.zst                # redacted compressed snapshot
-tape backup scan                                                # find secrets before they leak
+tape search "race condition" --agent codex --since 30d --limit 10
+tape search "会话备份"          # CJK queries just work
+tape search "auth" --project . # only this project's sessions
 ```
 
-`backup push` refuses to push when the secret scan finds anything (real keys
-end up in sessions more often than you think — scan yours), unless you pass
-`--allow-secrets`. `backup export` replaces secrets with `[REDACTED:<rule>]`
-inside the artifact; your local files are never modified.
+Most session-search tools tokenize for English only and silently fail on CJK text. Tape tokenizes latin text by word (with prefix matching) and CJK text by overlapping character bigrams, indexed in SQLite FTS5 with BM25 ranking. Search hits show the matching snippet, not just the session.
 
-### Search that actually works for Chinese
+## Restoring sessions across agents
 
-Most session-search tools tokenize for English only. Tape tokenizes latin text by word (prefix matching) and CJK text by character bigrams — `tape search "会话备份"` just works, with BM25 ranking on top.
-
-### Built for agents, too
+The problem tape was born for: you've been working with one agent, hit a token/quota wall, and want to continue in another — *with* the full conversation.
 
 ```bash
-tape search "auth refactor" --json --limit 5   # stable JSON schema
-tape schema backup push                        # introspect commands as JSON
+tape restore claude-code/7dd2afaf --to codex      # native: codex resume <id>
+tape restore codex/019ea0af --to claude-code      # native: claude --resume <id>
+tape restore codex/019ea0af --to cursor           # brief: handoff document
+tape restore @last --to codex --dry-run           # preview the plan first
 ```
 
-- JSON is the default whenever stdout is not a TTY; colors honor `NO_COLOR`
-- Semantic exit codes: `0` ok, `1` error, `2` usage, `3` no results, `10` dry-run passed
-- Every destructive or stateful command supports `--dry-run`
-- Errors are machine-readable: `{"error":"secrets_found","suggestion":"...","retryable":false}`
+Two strategies, chosen automatically:
 
-## How it stores your data
+- **native** — rewrites the dialogue as a real session file of the target agent, which then resumes it with its own `--resume` mechanism. Supported for claude-code ↔ codex.
+- **brief** — generates a structured handoff document (goal, state, decisions, next steps) and prints the command to start the next agent with it. The summary is written by whichever agent CLI you already have installed (`--llm claude|codex|cursor`), with a deterministic template fallback (`--llm none`) — no API keys needed.
+
+## Backing up
+
+```bash
+tape backup push --remote git@github.com:you/tape-archive.git  # archive-as-git-repo
+tape backup pull --remote ...        # fresh machine: clone + rebuild index
+tape backup export --output a.tar.zst # compressed, redacted snapshot
+tape backup scan                     # what would leak if I pushed this?
+```
+
+Real API keys end up in coding sessions more often than you think — scan yours. The secret scanner (AWS, GitHub, OpenAI, Anthropic, Slack, JWT, private keys, …) runs before every push and **blocks on findings** unless you pass `--allow-secrets`. `export` replaces secrets with `[REDACTED:<rule>]` inside the artifact; your local files are never modified.
+
+## Agent & script mode
+
+Tape follows the [agent-cli-guide](https://github.com/Johnixr/agent-cli-guide) conventions throughout, so other AI agents (and your scripts) can drive it reliably:
+
+```console
+$ tape search "auth refactor" --limit 5 | jq .data.hits[0].session_id
+"claude-code/7dd2afaf"
+
+$ tape schema backup push   # what flags does this command take?
+```
+
+- **JSON by default when piped** — every command emits one `{"schema_version":1,"data":{...}}` object on stdout when it is not a TTY (or with `--json`). Colors honor `NO_COLOR`.
+- **Semantic exit codes** — `0` ok · `1` error · `2` usage · `3` no results · `10` dry-run passed. Agents branch on codes, not on prose.
+- **Machine-readable errors** — `{"error":"secrets_found","message":"...","suggestion":"...","retryable":false}` on stderr.
+- **`--dry-run` everywhere** state is touched; exit 10 means "safe to run for real".
+
+## How tape stores your data
 
 ```
 ~/.tape/
@@ -92,18 +165,38 @@ tape schema backup push                        # introspect commands as JSON
 └── index/tape.db     # SQLite FTS5 — derived, always rebuildable
 ```
 
-Raw files are first-class citizens: summaries and indexes can always be regenerated; originals can't. The archive is plain files — `git init ~/.tape/archive` and push it wherever you trust.
+The design rule: **raw files are first-class, everything else is derived.** Summaries, indexes and handoffs can always be regenerated; the original conversation cannot. The archive is plain files — readable without tape, diffable in git, owned by you.
+
+## Supported agents
+
+| Agent | Reads | Native restore target |
+|---|---|---|
+| Claude Code | `~/.claude/projects/*/*.jsonl` | yes |
+| Codex CLI | `~/.codex/sessions/**/rollout-*.jsonl` | yes |
+| Cursor CLI | `~/.cursor/chats/*/*/store.db` | brief handoff |
+
+Each agent is a small adapter behind one interface ([`ports.Source`](internal/core/ports/ports.go)); adding a new one does not touch the core. Contributions for Gemini CLI, OpenCode and Aider are welcome.
+
+## Development
+
+```bash
+make ci      # everything CI runs: fmt, vet, race tests, coverage gate, smoke, e2e
+make smoke   # fast sanity subset (~1s)
+make e2e     # full end-to-end suite against the real binary
+```
+
+The test pyramid: unit tests per package, fixture tests for every session format parser, and an end-to-end suite that builds the actual binary and drives it against fake `$HOME` data — exit codes, JSON contracts, secret gates and disaster-recovery drills included. CI enforces formatting, `go vet`, the race detector, a coverage floor and cross-compilation for five platforms on every push.
+
+Architecture deep-dive (中文): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Roadmap
 
-- [x] **Archive & search** — claude-code, codex, cursor
+- [x] **Archive & search** — claude-code, codex, cursor; CJK tokenization
 - [x] **Backup** — git and tarball targets, secret scanning and redaction
-- [x] **Restore** — continue a Claude Code session in Codex (and vice versa)
-- [ ] **Memory** — distill MEMORY.md from your sessions, MCP server for agents
-- [ ] More sources (Gemini CLI, OpenCode, Aider) and backup targets (S3)
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (中文) for the full design.
+- [x] **Restore** — native claude-code ↔ codex, brief handoff for everything else
+- [ ] **Memory** — distill `MEMORY.md` from session history; MCP server so agents can search past sessions mid-task
+- [ ] More sources (Gemini CLI, OpenCode, Aider) and backup targets (S3/OSS)
 
 ## License
 
-MIT
+[MIT](LICENSE)

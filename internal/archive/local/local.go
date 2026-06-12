@@ -119,6 +119,9 @@ func (a *Archive) List(ctx context.Context, f ports.Filter) ([]model.Summary, er
 		if f.Project != "" && !matchProject(m.Summary, f.Project) {
 			return nil
 		}
+		if !f.Since.IsZero() && m.Summary.UpdatedAt.Before(f.Since) {
+			return nil
+		}
 		out = append(out, m.Summary)
 		return nil
 	})

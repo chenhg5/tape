@@ -37,6 +37,7 @@ type Source interface {
 type Filter struct {
 	Agent   string
 	Project string // matches project slug prefix or cwd substring
+	Since   time.Time
 	Limit   int
 }
 

@@ -34,12 +34,12 @@ type Session struct {
 }
 
 type Message struct {
-	ID        string          `json:"id,omitempty"`
-	ParentID  string          `json:"parent_id,omitempty"`
-	Role      Role            `json:"role"`
-	Text      string          `json:"text,omitempty"`
-	ToolCalls []ToolCall      `json:"tool_calls,omitempty"`
-	Timestamp time.Time       `json:"timestamp,omitempty"`
+	ID        string     `json:"id,omitempty"`
+	ParentID  string     `json:"parent_id,omitempty"`
+	Role      Role       `json:"role"`
+	Text      string     `json:"text,omitempty"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	Timestamp time.Time  `json:"timestamp,omitempty"`
 	// Raw preserves the original provider record verbatim so the IR is
 	// lossless even when normalization doesn't understand a field.
 	Raw json.RawMessage `json:"raw,omitempty"`

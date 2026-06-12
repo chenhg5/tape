@@ -67,17 +67,17 @@ func (s *Source) List(ctx context.Context, since time.Time) ([]ports.SessionRef,
 
 // line is the superset of fields we care about across line types.
 type line struct {
-	Type       string          `json:"type"`
-	UUID       string          `json:"uuid"`
-	ParentUUID string          `json:"parentUuid"`
-	Timestamp  time.Time       `json:"timestamp"`
-	CWD        string          `json:"cwd"`
-	GitBranch  string          `json:"gitBranch"`
-	Version    string          `json:"version"`
-	AITitle    string          `json:"aiTitle"`
-	Summary    string          `json:"summary"`
-	IsSidechain bool           `json:"isSidechain"`
-	Message    json.RawMessage `json:"message"`
+	Type        string          `json:"type"`
+	UUID        string          `json:"uuid"`
+	ParentUUID  string          `json:"parentUuid"`
+	Timestamp   time.Time       `json:"timestamp"`
+	CWD         string          `json:"cwd"`
+	GitBranch   string          `json:"gitBranch"`
+	Version     string          `json:"version"`
+	AITitle     string          `json:"aiTitle"`
+	Summary     string          `json:"summary"`
+	IsSidechain bool            `json:"isSidechain"`
+	Message     json.RawMessage `json:"message"`
 }
 
 type apiMessage struct {
@@ -89,9 +89,9 @@ type apiMessage struct {
 type contentBlock struct {
 	Type    string          `json:"type"`
 	Text    string          `json:"text"`
-	Name    string          `json:"name"`            // tool_use
-	Input   json.RawMessage `json:"input"`           // tool_use
-	Content json.RawMessage `json:"content"`         // tool_result
+	Name    string          `json:"name"`    // tool_use
+	Input   json.RawMessage `json:"input"`   // tool_use
+	Content json.RawMessage `json:"content"` // tool_result
 }
 
 func (s *Source) Load(ctx context.Context, ref ports.SessionRef) (*model.Session, error) {

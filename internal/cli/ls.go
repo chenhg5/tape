@@ -12,13 +12,17 @@ import (
 )
 
 func newLsCmd(app *App) *cobra.Command {
-	var agent, project string
+	var agent, project, since string
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List archived sessions",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sinceTime, err := parseSince(since)
+			if err != nil {
+				return err
+			}
 			if project == "." {
 				if wd, err := os.Getwd(); err == nil {
 					project = wd
@@ -31,13 +35,19 @@ func newLsCmd(app *App) *cobra.Command {
 				}
 			}
 			sums, err := app.Archive().List(cmd.Context(), ports.Filter{
-				Agent: agent, Project: project, Limit: limit,
+				Agent: agent, Project: project, Since: sinceTime, Limit: limit,
 			})
 			if err != nil {
 				return err
 			}
 			if app.useJSON() {
-				return emitJSON(map[string]any{"sessions": sums, "count": len(sums)})
+				if err := emitJSON(map[string]any{"sessions": sums, "count": len(sums)}); err != nil {
+					return err
+				}
+				if len(sums) == 0 {
+					return ErrNoResults
+				}
+				return nil
 			}
 			if len(sums) == 0 {
 				return ErrNoResults
@@ -53,6 +63,7 @@ func newLsCmd(app *App) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent (claude-code, codex, cursor)")
 	cmd.Flags().StringVar(&project, "project", "", "filter by project path ('.' = current dir)")
+	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max sessions to list")
 	return cmd
 }

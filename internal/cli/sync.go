@@ -29,7 +29,12 @@ func newSyncCmd(app *App) *cobra.Command {
 				return err
 			}
 			if app.useJSON() {
-				return emitJSON(report)
+				return emitJSON(map[string]any{
+					"sources":  report.Sources,
+					"archived": report.Archived(),
+					"skipped":  report.Skipped(),
+					"errors":   report.ErrorCount(),
+				})
 			}
 			for _, s := range report.Sources {
 				if !s.Found {

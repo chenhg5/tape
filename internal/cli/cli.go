@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -94,6 +95,10 @@ Output is human-readable on a TTY and JSON when piped (or with --json).
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// flag parsing problems are usage errors (exit 2), not runtime errors
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return usageError{err}
+	})
 	defaultDir := os.Getenv("TAPE_DIR")
 	if defaultDir == "" {
 		home, _ := os.UserHomeDir()
@@ -117,7 +122,7 @@ Output is human-readable on a TTY and JSON when piped (or with --json).
 	case errors.Is(err, ErrNoResults):
 		app.reportError(cliError{Type: "no_results", Message: "no results"})
 		return ExitNoResults
-	case isUsageError(err):
+	case isUsageError(err) || isCobraUsage(err):
 		app.reportError(cliError{Type: "usage", Message: err.Error()})
 		return ExitUsage
 	default:
@@ -129,6 +134,18 @@ Output is human-readable on a TTY and JSON when piped (or with --json).
 func isUsageError(err error) bool {
 	var u usageError
 	return errors.As(err, &u)
+}
+
+// isCobraUsage catches the usage errors cobra produces itself (unknown
+// command, wrong arg count) so they also map to exit 2.
+func isCobraUsage(err error) bool {
+	msg := err.Error()
+	for _, p := range []string{"unknown command", "accepts ", "requires at least", "unknown shorthand"} {
+		if strings.HasPrefix(msg, p) {
+			return true
+		}
+	}
+	return false
 }
 
 type usageError struct{ error }

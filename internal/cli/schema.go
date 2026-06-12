@@ -9,12 +9,12 @@ import (
 // pasting all help text into context (agent-cli-guide principle 7).
 
 type cmdSchema struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Usage       string      `json:"usage"`
-	Example     string      `json:"example,omitempty"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Usage       string       `json:"usage"`
+	Example     string       `json:"example,omitempty"`
 	Flags       []flagSchema `json:"flags,omitempty"`
-	Subcommands []cmdSchema `json:"subcommands,omitempty"`
+	Subcommands []cmdSchema  `json:"subcommands,omitempty"`
 }
 
 type flagSchema struct {

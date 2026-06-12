@@ -105,12 +105,12 @@ type blobMessage struct {
 }
 
 type contentPart struct {
-	Type       string          `json:"type"`
-	Text       string          `json:"text"`
-	ToolName   string          `json:"toolName"`
-	Args       json.RawMessage `json:"args"`   // tool-call
-	Result     json.RawMessage `json:"result"` // tool-result
-	Output     json.RawMessage `json:"output"`
+	Type     string          `json:"type"`
+	Text     string          `json:"text"`
+	ToolName string          `json:"toolName"`
+	Args     json.RawMessage `json:"args"`   // tool-call
+	Result   json.RawMessage `json:"result"` // tool-result
+	Output   json.RawMessage `json:"output"`
 }
 
 var workspaceRe = regexp.MustCompile(`Workspace Path: ([^\n]+)`)
@@ -259,7 +259,7 @@ func parseMessage(bm blobMessage, raw []byte) (model.Message, bool) {
 					out = p.Output
 				}
 				texts = append(texts, scan.Truncate(jsonText(out), scan.MaxToolIO))
-			// "reasoning" parts are model-internal; skipped (raw keeps them)
+				// "reasoning" parts are model-internal; skipped (raw keeps them)
 			}
 		}
 		msg.Text = strings.TrimSpace(strings.Join(texts, "\n"))

@@ -1,3 +1,7 @@
 /tape
 /dist/
 *.test
+
+# test artifacts
+.cover/
+coverage.out

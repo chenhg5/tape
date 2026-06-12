@@ -167,7 +167,14 @@ func newBackupScanCmd(app *App) *cobra.Command {
 				return err
 			}
 			if app.useJSON() {
-				return emitJSON(map[string]any{"findings": findings, "count": len(findings)})
+				if err := emitJSON(map[string]any{"findings": findings, "count": len(findings)}); err != nil {
+					return err
+				}
+				if len(findings) == 0 {
+					return nil
+				}
+				return cliError{Type: "secrets_found",
+					Message: fmt.Sprintf("%d potential secret(s) found", len(findings))}
 			}
 			if len(findings) == 0 {
 				fmt.Println("no secrets found")

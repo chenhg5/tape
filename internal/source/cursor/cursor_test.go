@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -107,5 +108,117 @@ func TestLoadFixture(t *testing.T) {
 	}
 	if sess.StartedAt.UnixMilli() != 1781256145540 {
 		t.Errorf("startedAt = %v", sess.StartedAt)
+	}
+}
+
+func TestFlexInt64(t *testing.T) {
+	cases := map[string]int64{
+		`1781256145540`:   1781256145540,
+		`"1781256145540"`: 1781256145540,
+		`null`:            0,
+		`""`:              0,
+		`"not-a-number"`:  0, // fail-soft
+	}
+	for in, want := range cases {
+		var f flexInt64
+		if err := json.Unmarshal([]byte(in), &f); err != nil {
+			t.Errorf("flexInt64(%s): %v", in, err)
+		}
+		if int64(f) != want {
+			t.Errorf("flexInt64(%s) = %d, want %d", in, f, want)
+		}
+	}
+}
+
+func TestVarint(t *testing.T) {
+	if v, n := varint([]byte{0x20}); v != 32 || n != 1 {
+		t.Errorf("single byte: %d %d", v, n)
+	}
+	if v, n := varint([]byte{0xac, 0x02}); v != 300 || n != 2 {
+		t.Errorf("two bytes: %d %d", v, n)
+	}
+	if _, n := varint([]byte{0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80}); n != 0 {
+		t.Errorf("unterminated varint must fail, n=%d", n)
+	}
+	if _, n := varint(nil); n != 0 {
+		t.Errorf("empty input: n=%d", n)
+	}
+}
+
+func TestJSONText(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`"a string"`, "a string"},
+		{`{"k":"v"}`, `{"k":"v"}`},
+		{``, ""},
+	}
+	for _, c := range cases {
+		if got := jsonText(json.RawMessage(c.in)); got != c.want {
+			t.Errorf("jsonText(%s) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestNormalizeRole(t *testing.T) {
+	if normalizeRole("tool") != model.RoleTool || normalizeRole("custom") != model.Role("custom") {
+		t.Error("role mapping broken")
+	}
+}
+
+func TestFirstUserTextStripsEnvelope(t *testing.T) {
+	s := &model.Session{Messages: []model.Message{{
+		Role: model.RoleUser,
+		Text: "<user_info>noise</user_info><user_query>真正的问题</user_query>trailing",
+	}}}
+	if got := firstUserText(s); got != "真正的问题" {
+		t.Errorf("got %q", got)
+	}
+	plain := &model.Session{Messages: []model.Message{{Role: model.RoleUser, Text: "plain"}}}
+	if got := firstUserText(plain); got != "plain" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// A root blob that references a missing child must not fail the whole load.
+func TestMissingBlobFailSoft(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "ws", "sess-1")
+	buildStore(t, dir)
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// drop one message blob, keep the root pointing at it
+	id := make([]byte, 32)
+	id[0] = 4 // the tool message
+	if _, err := db.Exec(`DELETE FROM blobs WHERE id = ?`, hex.EncodeToString(id)); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s := &Source{dir: base}
+	refs, _ := s.List(context.Background(), time.Time{})
+	sess, err := s.Load(context.Background(), refs[0])
+	if err != nil {
+		t.Fatalf("missing blob must not be fatal: %v", err)
+	}
+	if len(sess.Messages) != 2 {
+		t.Errorf("want 2 surviving messages, got %d", len(sess.Messages))
+	}
+}
+
+func TestListSkipsEmptyStore(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "ws", "empty-sess")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "store.db"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Source{dir: base}
+	refs, err := s.List(context.Background(), time.Time{})
+	if err != nil || len(refs) != 0 {
+		t.Errorf("empty store.db must be skipped: %v %v", refs, err)
 	}
 }

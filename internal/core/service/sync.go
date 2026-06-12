@@ -31,6 +31,22 @@ func (r SyncReport) Archived() int {
 	return n
 }
 
+func (r SyncReport) Skipped() int {
+	n := 0
+	for _, s := range r.Sources {
+		n += s.Skipped
+	}
+	return n
+}
+
+func (r SyncReport) ErrorCount() int {
+	n := 0
+	for _, s := range r.Sources {
+		n += len(s.Errors)
+	}
+	return n
+}
+
 type Sync struct {
 	Sources []ports.Source
 	Archive ports.Archive

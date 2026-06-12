@@ -34,11 +34,11 @@ func (a *App) paint(code, s string) string {
 	return "\x1b[" + code + "m" + s + "\x1b[0m"
 }
 
-func (a *App) bold(s string) string { return a.paint("1", s) }
-func (a *App) cyan(s string) string { return a.paint("36", s) }
-func (a *App) green(s string) string { return a.paint("32", s) }
+func (a *App) bold(s string) string   { return a.paint("1", s) }
+func (a *App) cyan(s string) string   { return a.paint("36", s) }
+func (a *App) green(s string) string  { return a.paint("32", s) }
 func (a *App) yellow(s string) string { return a.paint("33", s) }
-func (a *App) gray(s string) string { return a.paint("90", s) }
+func (a *App) gray(s string) string   { return a.paint("90", s) }
 
 // cliError is a machine-actionable error (agent-cli-guide principle 9).
 type cliError struct {
