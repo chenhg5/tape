@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -161,6 +163,7 @@ func caseInsensitiveReplace(s, old, replacement string) string {
 func newSearchCmd(app *App) *cobra.Command {
 	var agent, dir, since, sort string
 	var limit, page int
+	var printOnly bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Full-text search across all archived sessions",
@@ -168,12 +171,18 @@ func newSearchCmd(app *App) *cobra.Command {
 Japanese and Korean text is matched by character bigrams, so CJK queries
 just work.
 
+On a TTY hits are grouped by session and presented as an interactive
+picker: ↑/↓ to browse, Enter to act on a session (Resume here / Show /
+Copy ID / Copy resume command). Pass --print for the legacy grouped
+list output, or --json / pipe for the machine contract.
+
 Results are ordered newest-session-first (--sort recent, default) because
 the most useful match is usually "the conversation I just had". Switch to
 --sort relevance for classic BM25 ranking when you are mining old archives.`,
-		Example: `  tape search "auth migration"
+		Example: `  tape search "auth migration"            # interactive picker on a TTY
   tape search codex --agent cursor
-  tape search "memory leak" --sort relevance --limit 50`,
+  tape search "memory leak" --sort relevance --limit 50
+  tape search "auth" --print               # legacy grouped list`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return usageErrf("missing search query. try:\n" +
@@ -239,7 +248,14 @@ the most useful match is usually "the conversation I just had". Switch to
 			if len(hits) == 0 {
 				return ErrNoResults
 			}
-			renderHits(app, hits, strings.Join(args, " "), page, hasMore)
+			query := strings.Join(args, " ")
+			// Interactive path mirrors `tape ls`: TTY + no --print + no
+			// explicit pagination → group hits by session and let the
+			// user pick + act in one go, no copy-paste needed.
+			if !printOnly && app.interactive() && !cmd.Flag("page").Changed {
+				return runInteractiveSearch(cmd.Context(), app, query, hits)
+			}
+			renderHits(app, hits, query, page, hasMore)
 			return nil
 		},
 	}
@@ -249,5 +265,60 @@ the most useful match is usually "the conversation I just had". Switch to
 	cmd.Flags().StringVar(&sort, "sort", "recent", "result order: 'recent' (newest session first) or 'relevance' (BM25)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")
 	cmd.Flags().IntVar(&page, "page", 1, "page number (1-based)")
+	cmd.Flags().BoolVar(&printOnly, "print", false, "skip the interactive picker, just print the grouped hit list")
 	return cmd
+}
+
+// runInteractiveSearch groups hits by session, shows them in a picker,
+// then runs the same action menu as `tape ls`. The first matching hit
+// per session becomes the picker label (snippet with the query bolded);
+// the "+N more" tail tells the user the session has additional matches
+// they'd see in `tape show <id>`.
+func runInteractiveSearch(ctx context.Context, app *App, query string, hits []ports.Hit) error {
+	type group struct {
+		first ports.Hit
+		count int
+	}
+	groups := map[string]*group{}
+	var order []string
+	for _, h := range hits {
+		if g, ok := groups[h.SessionID]; ok {
+			g.count++
+			continue
+		}
+		groups[h.SessionID] = &group{first: h, count: 1}
+		order = append(order, h.SessionID)
+	}
+
+	labels := make([]string, len(order))
+	for i, id := range order {
+		g := groups[id]
+		// Use the snippet — not the title — as the headline so the
+		// user sees *why* this session matched. Title still appears
+		// dimmed at the end when present and distinct, so context is
+		// kept; truncation budgets are tuned for an 80-col terminal
+		// after the id/agent/time prefix (~50 cols).
+		snippet := highlightSnippet(app, g.first.Snippet, query, 50)
+		more := ""
+		if g.count > 1 {
+			more = "  " + app.gray(fmt.Sprintf("+%d more", g.count-1))
+		}
+		labels[i] = fmt.Sprintf("%s  %s  %s  %s%s",
+			app.cyan(padRightDisp(shortID(id), 22)),
+			app.agentColor(padRightDisp(g.first.Agent, 11)),
+			padRightDisp(relTime(g.first.Timestamp), 9),
+			snippet, more)
+	}
+	pick, err := pickInteractive(app, fmt.Sprintf("Pick a session (%d matches):", len(hits)), labels)
+	if err != nil {
+		if errors.Is(err, errPromptAborted) {
+			return nil
+		}
+		return err
+	}
+	sess, err := app.Archive().Get(ctx, order[pick])
+	if err != nil {
+		return err
+	}
+	return runSessionAction(app, sess)
 }

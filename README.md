@@ -87,8 +87,8 @@ git clone https://github.com/chenhg5/tape && cd tape && make build
 ```bash
 tape sync          # 1. archive sessions from every installed agent (incremental)
 tape ls            # 2. browse interactively — Enter on a row to Resume / Show / Copy
-tape search "..."  # 3. find that conversation from three weeks ago
-tape show <id>     # 4. replay it
+tape search "..."  # 3. find that conversation from three weeks ago (same picker)
+tape show <id>     # 4. or replay it by id
 ```
 
 `tape sync` is safe to run any time — content checksums (blake3) make it incremental and idempotent. Add it to cron if you like.
@@ -109,7 +109,7 @@ Tape mirrors the agent directories over plain `ssh` + `tar` (nothing to install 
 |---|---|
 | `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines) |
 | `tape ls` | Browse archived sessions (interactive picker on a TTY; `--print` for plain table; filters `--agent`, `--dir .`, `--since 7d`) |
-| `tape search <query>` | Full-text search across everything |
+| `tape search <query>` | Full-text search across everything (interactive picker on a TTY; `--print` for plain list) |
 | `tape show <id>` | Replay a session (`--full` includes tool output) |
 | `tape overview` | Dashboard: agents, activity sparkline, top projects, recent sessions |
 | `tape restore <id> --to <agent>` | Continue a session in another agent |
