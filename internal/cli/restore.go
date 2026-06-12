@@ -295,6 +295,8 @@ func agentLaunchBin(agent string) (string, bool) {
 		return "iflow", true
 	case "aider":
 		return "aider", true
+	case "opencode":
+		return "opencode", true
 	default:
 		return agent, false
 	}

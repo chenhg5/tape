@@ -54,7 +54,7 @@ Tape 把这些会话当作**用户拥有的、第一公民的数据资产**来�
                     │   采集 → 归一化 → 本地归档库 → 索引 │
                     └─────────────────────────────────┘
         ┌───────────────────────────────────────────────┐
-        │ Source Providers:claude-code · codex · cursor · gemini · qwen · iflow · aider │
+        │ Source Providers:claude-code · codex · cursor · gemini · qwen · iflow · aider · opencode │
         │ · gemini-cli · opencode · …(可插拔)            │
         └───────────────────────────────────────────────┘
 ```
@@ -394,7 +394,7 @@ tape stats
 | **M1 地基** | core 模型/端口、claude-code + codex + cursor-cli 三个 Source、本地归档、FTS 检索、`sync/ls/search/show`、全量 `--json` | 在作者本机归档并检索全部历史会话 | ✅ 63 会话归档,中英文检索验证 |
 | **M2 备份** | Redactor、git + tar 两个 BackupTarget、zstd、`backup/index rebuild`、换机 `pull` 恢复归档 | 私有 git 仓库完成一次全量备份与异机还原 | ✅ 真实归档扫出 83 处 secret 并拦截;980MB→35MB 脱敏导出;异机 clone+重建索引检索成功 |
 | **M3 恢复** | `brief` 策略(LLMRunner: claude/codex/cursor CLI)、`native` 策略(claude↔codex 双向)、`restore/rewind` | Claude 会话在 Codex 原生 resume 成功;失败可降级 | ✅ claude→codex 原生 resume 实测成功;brief(codex 总结)与模板降级验证 |
-| **M3.5 Phase A 扩源** | Gemini CLI / Qwen Code / iFlow / Aider 四个新 Source;`memory` 策略适配各家 `<AGENT>.md` 约定;品牌色+交互 picker 列表 | 7 家 agent 全部跑通 `sync → search → show → restore (memory/transcript)` | ✅ 全部解析器单测+端到端验证(`TestPhaseAAgents`) |
+| **M3.5 Phase A 扩源** | Gemini CLI / Qwen Code / iFlow / Aider / OpenCode 五个新 Source;`memory` 策略适配各家 `<AGENT>.md` 约定;品牌色+交互 picker 列表 | 8 家 agent 全部跑通 `sync → search → show → restore (memory/transcript)` | ✅ 全部解析器单测+端到端验证(`TestPhaseAAgents`)，OpenCode 走 Drizzle SQLite (`session/message/part`) |
 | **M4 记忆与 agent 化** | Extractor(llm/rule)、`memory`、`ask`、`stats`、MCP server、`init --agents-md` | 任意 agent 通过 MCP 查询历史并拿到交接文档 | 待做 |
 
 M3 后增量交付:

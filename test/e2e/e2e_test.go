@@ -230,6 +230,89 @@ func (e *env) seedIFlow() {
 	}
 }
 
+// opencodeSessionID matches the row id we seed into opencode.db below.
+const opencodeSessionID = "ses_opencode_demo"
+
+func (e *env) seedOpenCode() {
+	e.t.Helper()
+	dir := filepath.Join(e.home, ".local", "share", "opencode")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "opencode.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer db.Close()
+
+	for _, q := range []string{
+		`CREATE TABLE project (id TEXT PRIMARY KEY, directory TEXT NOT NULL)`,
+		`CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT,
+			slug TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL,
+			version TEXT NOT NULL, time_created INTEGER, time_updated INTEGER)`,
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+			time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL)`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL,
+			session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER,
+			data TEXT NOT NULL)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	created := int64(1781256000000)
+	_, _ = db.Exec(`INSERT INTO project VALUES (?,?)`, "prj_demo", "/root/code/demo")
+	_, _ = db.Exec(`INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?)`,
+		opencodeSessionID, "prj_demo", nil, "demo", "/root/code/demo",
+		"Improve test coverage", "1.5.0", created, created+10_000)
+
+	uData := `{"id":"m1","sessionID":"` + opencodeSessionID + `","role":"user","time":{"created":` + itoa(created+100) + `}}`
+	aData := `{"id":"m2","sessionID":"` + opencodeSessionID + `","role":"assistant","time":{"created":` + itoa(created+5000) + `},"model":{"providerID":"anthropic","modelID":"claude-fable-5"},"path":{"cwd":"/root/code/demo","root":"/root/code/demo"}}`
+	_, _ = db.Exec(`INSERT INTO message VALUES (?,?,?,?,?)`, "m1", opencodeSessionID, created+100, created+100, uData)
+	_, _ = db.Exec(`INSERT INTO message VALUES (?,?,?,?,?)`, "m2", opencodeSessionID, created+5000, created+5000, aData)
+
+	parts := []struct {
+		id, mid string
+		t       int64
+		data    string
+	}{
+		{"p1", "m1", created + 200, `{"type":"text","text":"补 e2e 测试覆盖"}`},
+		{"p2", "m2", created + 3000, `{"type":"reasoning","text":"先看现有 test/e2e"}`},
+		{"p3", "m2", created + 4000, `{"type":"tool","tool":"list_dir","callID":"c1","state":{"status":"completed","input":{"path":"test/e2e"},"output":"e2e_test.go\nworkflow_test.go"}}`},
+		{"p4", "m2", created + 5500, `{"type":"text","text":"已加 phase_a_test 覆盖四家 agent"}`},
+	}
+	for _, p := range parts {
+		if _, err := db.Exec(`INSERT INTO part VALUES (?,?,?,?,?,?)`,
+			p.id, p.mid, opencodeSessionID, p.t, p.t, p.data); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+}
+
+// itoa avoids strconv import in this giant fixture helper file.
+func itoa(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
+}
+
 func (e *env) seedAider() {
 	e.t.Helper()
 	body := `# aider chat started at 2026-06-12 10:30:45

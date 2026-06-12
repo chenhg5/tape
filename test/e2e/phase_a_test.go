@@ -31,33 +31,35 @@ func TestPhaseAAgents(t *testing.T) {
 	e.seedQwen()
 	e.seedIFlow()
 	e.seedAider()
+	e.seedOpenCode()
 
 	// sync: every adapter discovers its sessions and the report counts
-	// all four under "archived".
+	// all of them under "archived".
 	d := e.mustRun(0, "sync").data(t)
-	if got := int(d["archived"].(float64)); got < 4 {
-		t.Fatalf("archived = %d, want >= 4 (one per Phase-A agent)", got)
+	if got := int(d["archived"].(float64)); got < 5 {
+		t.Fatalf("archived = %d, want >= 5 (one per new agent)", got)
 	}
 
-	// ls shows all four agents at once.
+	// ls shows every new agent.
 	d = e.mustRun(0, "ls", "--dir", "").data(t)
 	seen := map[string]bool{}
 	for _, raw := range d["sessions"].([]any) {
 		item := raw.(map[string]any)
 		seen[item["agent"].(string)] = true
 	}
-	for _, a := range []string{"gemini", "qwen", "iflow", "aider"} {
+	for _, a := range []string{"gemini", "qwen", "iflow", "aider", "opencode"} {
 		if !seen[a] {
-			t.Errorf("ls missed Phase-A agent %q (seen=%v)", a, seen)
+			t.Errorf("ls missed agent %q (seen=%v)", a, seen)
 		}
 	}
 
-	// search returns matches from each Phase-A agent.
+	// search returns matches from each new agent.
 	for query, wantAgent := range map[string]string{
 		"webpack":      "gemini",
 		"jwt 鉴权":       "qwen",
 		"翻译":           "iflow",
 		"refactor the": "aider",
+		"e2e 测试":       "opencode",
 	} {
 		d = e.mustRun(0, "search", query, "--dir", "").data(t)
 		hits, _ := d["hits"].([]any)

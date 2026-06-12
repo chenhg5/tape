@@ -15,7 +15,7 @@
 
 ---
 
-You spend hours (and dollars) talking to **Claude Code**, **Codex**, **Cursor**, **Gemini CLI**, **Qwen Code**, **iFlow** and **Aider**. Those conversations are project knowledge — decisions made, approaches rejected, the *why* behind every line of code. But they are scattered across vendor-specific formats, locked to one machine, and impossible to search.
+You spend hours (and dollars) talking to **Claude Code**, **Codex**, **Cursor**, **Gemini CLI**, **Qwen Code**, **iFlow**, **OpenCode** and **Aider**. Those conversations are project knowledge — decisions made, approaches rejected, the *why* behind every line of code. But they are scattered across vendor-specific formats, locked to one machine, and impossible to search.
 
 Tape turns them into **data you own**:
 
@@ -209,8 +209,9 @@ The design rule: **raw files are first-class, everything else is derived.** Summ
 | Qwen Code | `~/.qwen/projects/*/chats/*.jsonl` | memory / brief | `QWEN.md` |
 | iFlow CLI | `~/.iflow/{projects,conversations}/...` | memory / brief | `IFLOW.md` |
 | Aider | `~/.aider.chat.history.md` (+ project-local) | memory / brief | `CONVENTIONS.md` |
+| OpenCode | `~/.local/share/opencode/opencode.db` (SQLite) | memory / brief | `AGENTS.md` |
 
-Each agent is a small adapter behind one interface ([`ports.Source`](internal/core/ports/ports.go)); adding a new one does not touch the core. Contributions for OpenCode, Cline and others are welcome.
+Each agent is a small adapter behind one interface ([`ports.Source`](internal/core/ports/ports.go)); adding a new one does not touch the core. Contributions for Cline, RooCode and others are welcome.
 
 ## Development
 
@@ -226,11 +227,11 @@ Architecture deep-dive (中文): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Roadmap
 
-- [x] **Archive & search** — claude-code, codex, cursor, gemini, qwen, iflow, aider; CJK tokenization
+- [x] **Archive & search** — claude-code, codex, cursor, gemini, qwen, iflow, aider, opencode; CJK tokenization
 - [x] **Backup** — git and tarball targets, secret scanning and redaction
 - [x] **Restore** — native claude-code ↔ codex, memory injection into the project's `<AGENT>.md` for everything else, plus transcript / brief fallbacks
 - [ ] **Memory** — distill `MEMORY.md` from session history; MCP server so agents can search past sessions mid-task
-- [ ] More sources (OpenCode, Cline, RooCode) and backup targets (S3/OSS)
+- [ ] More sources (Cline, RooCode, OpenHands) and backup targets (S3/OSS)
 
 ## License
 

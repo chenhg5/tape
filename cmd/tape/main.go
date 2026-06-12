@@ -13,6 +13,7 @@ import (
 	"github.com/chenhg5/tape/internal/source/cursor"
 	"github.com/chenhg5/tape/internal/source/gemini"
 	"github.com/chenhg5/tape/internal/source/iflow"
+	"github.com/chenhg5/tape/internal/source/opencode"
 	"github.com/chenhg5/tape/internal/source/qwen"
 )
 
@@ -32,6 +33,7 @@ func main() {
 			qwen.New(home),
 			iflow.New(home),
 			aider.New(home),
+			opencode.New(home),
 		}
 	}
 	app := &cli.App{
