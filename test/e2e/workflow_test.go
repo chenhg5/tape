@@ -86,6 +86,35 @@ func TestFullWorkflow(t *testing.T) {
 	}
 	// search still works after rebuild
 	e.mustRun(0, "search", "迁移脚本")
+
+	// 10. overview aggregates the archive
+	d = e.mustRun(0, "overview").data(t)
+	if d["sessions"] != float64(3) || d["projects"] != float64(1) {
+		t.Errorf("overview totals: sessions=%v projects=%v", d["sessions"], d["projects"])
+	}
+	if agents := d["agents"].([]any); len(agents) != 3 {
+		t.Errorf("overview agents: %d", len(agents))
+	}
+	if d["archive_bytes"].(float64) <= 0 {
+		t.Errorf("archive_bytes = %v", d["archive_bytes"])
+	}
+	if recent := d["recent"].([]any); len(recent) != 3 {
+		t.Errorf("overview recent: %d", len(recent))
+	}
+	if days := d["activity"].([]any); len(days) != 14 {
+		t.Errorf("overview activity days: %d", len(days))
+	}
+}
+
+func TestOverviewEmptyArchive(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	d := e.mustRun(0, "overview").data(t)
+	if d["sessions"] != float64(0) {
+		t.Errorf("empty overview: %v", d["sessions"])
+	}
 }
 
 // TestSinceFilter checks the incremental time window plumbing end to end.

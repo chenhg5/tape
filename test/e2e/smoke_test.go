@@ -75,7 +75,7 @@ func TestSmokeSchemaIsValidJSON(t *testing.T) {
 	for _, c := range envelope.Data.Subcommands {
 		names[c.Name] = true
 	}
-	for _, want := range []string{"sync", "ls", "search", "show", "backup", "restore", "index", "schema"} {
+	for _, want := range []string{"sync", "ls", "search", "show", "overview", "backup", "restore", "index", "schema"} {
 		if !names[want] {
 			t.Errorf("schema missing command %q", want)
 		}

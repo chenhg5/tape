@@ -112,7 +112,8 @@ Output is human-readable on a TTY and JSON when piped (or with --json).
 
 	root.AddCommand(
 		newSyncCmd(app), newLsCmd(app), newSearchCmd(app), newShowCmd(app),
-		newBackupCmd(app), newRestoreCmd(app), newIndexCmd(app), newSchemaCmd(app, root),
+		newOverviewCmd(app), newBackupCmd(app), newRestoreCmd(app),
+		newIndexCmd(app), newSchemaCmd(app, root),
 	)
 
 	err := root.Execute()

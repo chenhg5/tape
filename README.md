@@ -111,6 +111,7 @@ Tape mirrors the agent directories over plain `ssh` + `tar` (nothing to install 
 | `tape ls` | List archived sessions (`--agent`, `--project .`, `--since 7d`) |
 | `tape search <query>` | Full-text search across everything |
 | `tape show <id>` | Replay a session (`--full` includes tool output) |
+| `tape overview` | Dashboard: agents, activity sparkline, top projects, recent sessions |
 | `tape restore <id> --to <agent>` | Continue a session in another agent |
 | `tape backup push / pull` | Sync the archive with a private git remote |
 | `tape backup export / scan` | Redacted tarball snapshot / standalone secret scan |
@@ -171,6 +172,7 @@ $ tape schema backup push   # what flags does this command take?
 - **Semantic exit codes** — `0` ok · `1` error · `2` usage · `3` no results · `10` dry-run passed. Agents branch on codes, not on prose.
 - **Machine-readable errors** — `{"error":"secrets_found","message":"...","suggestion":"...","retryable":false}` on stderr.
 - **`--dry-run` everywhere** state is touched; exit 10 means "safe to run for real".
+- **Drop-in agent skill** — [SKILL.md](SKILL.md) teaches any agent the workflows and contracts; copy it into your skills directory (e.g. `.cursor/skills/tape/` or `~/.claude/skills/tape/`).
 
 ## How tape stores your data
 
