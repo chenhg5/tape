@@ -24,10 +24,10 @@ func newShowCmd(app *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if app.jsonOut {
+			if app.useJSON() {
 				return emitJSON(s)
 			}
-			fmt.Printf("\x1b[1m%s\x1b[0m\n", s.Title)
+			fmt.Println(app.bold(s.Title))
 			fmt.Printf("id: %s  agent: %s  model: %s\n", s.ID, s.Agent, orDash(s.Model))
 			fmt.Printf("cwd: %s  branch: %s\n", orDash(s.CWD), orDash(s.GitBranch))
 			fmt.Printf("from %s to %s, %d message(s)\n\n", fmtTime(s.StartedAt), fmtTime(s.UpdatedAt), len(s.Messages))
@@ -38,18 +38,18 @@ func newShowCmd(app *App) *cobra.Command {
 				}
 				switch m.Role {
 				case model.RoleUser:
-					fmt.Printf("\x1b[36m● user\x1b[0m %s\n%s\n\n", fmtTime(m.Timestamp), text)
+					fmt.Printf("%s %s\n%s\n\n", app.cyan("● user"), fmtTime(m.Timestamp), text)
 				case model.RoleAssistant:
 					if text != "" {
-						fmt.Printf("\x1b[32m● assistant\x1b[0m %s\n%s\n", fmtTime(m.Timestamp), text)
+						fmt.Printf("%s %s\n%s\n", app.green("● assistant"), fmtTime(m.Timestamp), text)
 					}
 					for _, tc := range m.ToolCalls {
-						fmt.Printf("\x1b[33m  ⚙ %s\x1b[0m %s\n", tc.Name, truncate(tc.Input, 120))
+						fmt.Printf("%s %s\n", app.yellow("  ⚙ "+tc.Name), truncate(tc.Input, 120))
 					}
 					fmt.Println()
 				case model.RoleTool:
 					if full {
-						fmt.Printf("\x1b[90m● tool\x1b[0m\n%s\n\n", text)
+						fmt.Printf("%s\n%s\n\n", app.gray("● tool"), text)
 					}
 				}
 			}

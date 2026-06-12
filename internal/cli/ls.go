@@ -36,7 +36,7 @@ func newLsCmd(app *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if app.jsonOut {
+			if app.useJSON() {
 				return emitJSON(map[string]any{"sessions": sums, "count": len(sums)})
 			}
 			if len(sums) == 0 {

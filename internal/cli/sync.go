@@ -28,7 +28,7 @@ func newSyncCmd(app *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if app.jsonOut {
+			if app.useJSON() {
 				return emitJSON(report)
 			}
 			for _, s := range report.Sources {

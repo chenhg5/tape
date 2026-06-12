@@ -36,7 +36,7 @@ func newSearchCmd(app *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if app.jsonOut {
+			if app.useJSON() {
 				return emitJSON(map[string]any{"hits": hits, "count": len(hits)})
 			}
 			if len(hits) == 0 {
@@ -47,7 +47,7 @@ func newSearchCmd(app *App) *cobra.Command {
 				if title == "" {
 					title = h.Project
 				}
-				fmt.Printf("\x1b[1m%s\x1b[0m  %s  [%s] %s\n", shortID(h.SessionID), fmtTime(h.Timestamp), h.Role, truncate(title, 60))
+				fmt.Printf("%s  %s  [%s] %s\n", app.bold(shortID(h.SessionID)), fmtTime(h.Timestamp), h.Role, truncate(title, 60))
 				fmt.Printf("  %s\n\n", h.Snippet)
 			}
 			fmt.Printf("%d hit(s). Use `tape show <id>` to replay a session.\n", len(hits))

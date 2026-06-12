@@ -24,12 +24,24 @@ const schemaVersion = 1
 // without parsing output.
 var ErrNoResults = errors.New("no results")
 
+// errDryRun maps to exit code 10: the dry run succeeded and it is safe to
+// run for real (agent-cli-guide principle 5).
+var errDryRun = errors.New("dry run ok")
+
 const (
 	ExitOK        = 0
 	ExitError     = 1
 	ExitUsage     = 2
 	ExitNoResults = 3
+	ExitDryRunOK  = 10
 )
+
+const exitCodeHelp = `Exit codes:
+  0  success
+  1  error
+  2  usage error
+  3  no results / not found
+  10 dry run succeeded (safe to run without --dry-run)`
 
 type App struct {
 	Sources []ports.Source
@@ -67,9 +79,17 @@ func (a *App) Close() {
 
 func Execute(app *App) int {
 	root := &cobra.Command{
-		Use:           "tape",
-		Short:         "Record, search and replay your AI coding sessions",
-		Long:          "Tape archives sessions from Claude Code, Codex and Cursor into one place you own.\nNothing gets lost on tape.",
+		Use:   "tape",
+		Short: "Record, search and replay your AI coding sessions",
+		Long: `Tape archives sessions from Claude Code, Codex and Cursor into one place you own.
+Nothing gets lost on tape.
+
+Output is human-readable on a TTY and JSON when piped (or with --json).
+
+` + exitCodeHelp,
+		Example: `  tape sync                          archive new sessions from all agents
+  tape search "为什么不用 oauth2"      full-text search, CJK supported
+  tape restore codex/019ea0af --to claude-code`,
 		Version:       app.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -82,21 +102,26 @@ func Execute(app *App) int {
 	root.PersistentFlags().StringVar(&app.dir, "dir", defaultDir, "tape data directory (env: TAPE_DIR)")
 	root.PersistentFlags().BoolVar(&app.jsonOut, "json", false, "machine-readable JSON output")
 
-	root.AddCommand(newSyncCmd(app), newLsCmd(app), newSearchCmd(app), newShowCmd(app))
+	root.AddCommand(
+		newSyncCmd(app), newLsCmd(app), newSearchCmd(app), newShowCmd(app),
+		newBackupCmd(app), newRestoreCmd(app), newIndexCmd(app), newSchemaCmd(app, root),
+	)
 
 	err := root.Execute()
 	app.Close()
 	switch {
 	case err == nil:
 		return ExitOK
+	case errors.Is(err, errDryRun):
+		return ExitDryRunOK
 	case errors.Is(err, ErrNoResults):
-		fmt.Fprintln(os.Stderr, "tape: no results")
+		app.reportError(cliError{Type: "no_results", Message: "no results"})
 		return ExitNoResults
 	case isUsageError(err):
-		fmt.Fprintln(os.Stderr, "tape:", err)
+		app.reportError(cliError{Type: "usage", Message: err.Error()})
 		return ExitUsage
 	default:
-		fmt.Fprintln(os.Stderr, "tape:", err)
+		app.reportError(err)
 		return ExitError
 	}
 }

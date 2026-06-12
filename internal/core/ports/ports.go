@@ -78,3 +78,37 @@ type Index interface {
 	Search(ctx context.Context, q Query) ([]Hit, error)
 	Close() error
 }
+
+type BackupOpts struct {
+	ArchiveDir  string
+	Destination string // git remote URL, tarball path, ... target-specific
+	Message     string
+	DryRun      bool
+	// RedactCopy, when non-nil, transforms file contents on the way into
+	// the backup artifact. Local archive files are never modified.
+	RedactCopy func(path string, data []byte) []byte
+}
+
+type BackupResult struct {
+	Target  string `json:"target"`
+	Action  string `json:"action"`
+	Changed int    `json:"changed_files"`
+	Ref     string `json:"ref,omitempty"`
+	Output  string `json:"output,omitempty"`
+	Note    string `json:"note,omitempty"`
+}
+
+// BackupTarget moves the archive to/from external storage.
+type BackupTarget interface {
+	Name() string
+	Push(ctx context.Context, opts BackupOpts) (*BackupResult, error)
+	Pull(ctx context.Context, opts BackupOpts) (*BackupResult, error)
+}
+
+// SessionWriter is implemented by sources that can also write a session in
+// their native format, enabling native cross-agent restore.
+type SessionWriter interface {
+	// Write materializes s as a new session in this agent's storage and
+	// returns the command the user runs to resume it.
+	Write(ctx context.Context, s *model.Session) (resumeCmd string, err error)
+}

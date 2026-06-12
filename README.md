@@ -34,11 +34,36 @@ go install github.com/chenhg5/tape/cmd/tape@latest
 ```bash
 tape sync                     # incremental: only new/changed sessions are archived
 tape ls --project .           # sessions of the current project, across all agents
-tape ls --agent codex
 tape search "sandbox" --since 30d --limit 10
-tape show codex/019ea0af      # id prefixes work everywhere
-tape show <id> --full         # include tool outputs
+tape show codex/019ea0af      # id prefixes work everywhere; --full includes tool output
 ```
+
+### Continue a session in another agent
+
+```bash
+tape restore claude-code/04ebf6a4 --to codex
+# → restored as a native codex session. Resume it with:
+#     cd /root/code/demo && codex resume 019ebb66-899f-77cf-b66c-9009d4c5f09b
+```
+
+Two strategies, picked automatically:
+
+- **native** — rewrites the dialogue as a real session of the target agent, resumed with the agent's own `--resume`. Supported for claude-code ↔ codex.
+- **brief** — generates a handoff document (`tape restore <id> --to cursor`), summarized by whichever agent CLI you already have installed (`--llm claude|codex|cursor|none`); falls back to a deterministic template.
+
+### Back up everything
+
+```bash
+tape backup push --remote git@github.com:you/tape-archive.git   # archive-as-git-repo
+tape backup pull --remote ...                                   # fresh machine: clone + reindex
+tape backup export --output tape-archive.tar.zst                # redacted compressed snapshot
+tape backup scan                                                # find secrets before they leak
+```
+
+`backup push` refuses to push when the secret scan finds anything (real keys
+end up in sessions more often than you think — scan yours), unless you pass
+`--allow-secrets`. `backup export` replaces secrets with `[REDACTED:<rule>]`
+inside the artifact; your local files are never modified.
 
 ### Search that actually works for Chinese
 
@@ -46,14 +71,15 @@ Most session-search tools tokenize for English only. Tape tokenizes latin text b
 
 ### Built for agents, too
 
-Every command speaks JSON with a stable schema:
-
 ```bash
-tape search "auth refactor" --json --limit 5
-tape ls --project . --json
+tape search "auth refactor" --json --limit 5   # stable JSON schema
+tape schema backup push                        # introspect commands as JSON
 ```
 
-Exit codes are semantic: `0` ok, `1` error, `2` usage, `3` no results.
+- JSON is the default whenever stdout is not a TTY; colors honor `NO_COLOR`
+- Semantic exit codes: `0` ok, `1` error, `2` usage, `3` no results, `10` dry-run passed
+- Every destructive or stateful command supports `--dry-run`
+- Errors are machine-readable: `{"error":"secrets_found","suggestion":"...","retryable":false}`
 
 ## How it stores your data
 
@@ -71,9 +97,10 @@ Raw files are first-class citizens: summaries and indexes can always be regenera
 ## Roadmap
 
 - [x] **Archive & search** — claude-code, codex, cursor
-- [ ] **Backup** — git / S3 / tarball targets, with secret redaction
-- [ ] **Restore** — continue a Claude Code session in Codex (and vice versa)
+- [x] **Backup** — git and tarball targets, secret scanning and redaction
+- [x] **Restore** — continue a Claude Code session in Codex (and vice versa)
 - [ ] **Memory** — distill MEMORY.md from your sessions, MCP server for agents
+- [ ] More sources (Gemini CLI, OpenCode, Aider) and backup targets (S3)
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (中文) for the full design.
 

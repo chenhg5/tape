@@ -389,12 +389,19 @@ tape stats
 
 ## 7. 里程碑
 
-| 阶段 | 内容 | 验收 |
-|---|---|---|
-| **M1 地基** | core 模型/端口、claude-code + codex + cursor-cli 三个 Source、本地归档、FTS 检索、`sync/ls/search/show`、全量 `--json` | 在作者本机归档并检索全部历史会话 |
-| **M2 备份** | Redactor、git + tar 两个 BackupTarget、zstd、`backup/rebuild`、换机 `pull` 恢复归档 | 私有 git 仓库完成一次全量备份与异机还原 |
-| **M3 恢复** | `brief` 策略(LLMRunner: claude-cli/codex-cli)、`native` 策略(claude↔codex 双向)、`restore/rewind` | Claude 会话在 Codex 原生 resume 成功;失败可降级 |
-| **M4 记忆与 agent 化** | Extractor(llm/rule)、`memory`、`ask`、`stats`、MCP server、`init --agents-md` | 任意 agent 通过 MCP 查询历史并拿到交接文档 |
+| 阶段 | 内容 | 验收 | 状态 |
+|---|---|---|---|
+| **M1 地基** | core 模型/端口、claude-code + codex + cursor-cli 三个 Source、本地归档、FTS 检索、`sync/ls/search/show`、全量 `--json` | 在作者本机归档并检索全部历史会话 | ✅ 63 会话归档,中英文检索验证 |
+| **M2 备份** | Redactor、git + tar 两个 BackupTarget、zstd、`backup/index rebuild`、换机 `pull` 恢复归档 | 私有 git 仓库完成一次全量备份与异机还原 | ✅ 真实归档扫出 83 处 secret 并拦截;980MB→35MB 脱敏导出;异机 clone+重建索引检索成功 |
+| **M3 恢复** | `brief` 策略(LLMRunner: claude/codex/cursor CLI)、`native` 策略(claude↔codex 双向)、`restore/rewind` | Claude 会话在 Codex 原生 resume 成功;失败可降级 | ✅ claude→codex 原生 resume 实测成功;brief(codex 总结)与模板降级验证 |
+| **M4 记忆与 agent 化** | Extractor(llm/rule)、`memory`、`ask`、`stats`、MCP server、`init --agents-md` | 任意 agent 通过 MCP 查询历史并拿到交接文档 | 待做 |
+
+实现中确定的关键细节(对原设计的细化):
+
+- **备份即仓库**:git 目标直接把 `~/.tape/archive` 变成 git 仓库,remote 存在仓库自身的 git config 里,tape 无需额外配置状态;
+- **脱敏不改本地**:`backup push` 走"扫描即拦截"(发现 secret 阻断,`--allow-secrets` 显式放行),`backup export` 在写入 tarball 流中替换(`[REDACTED:<rule>]`);SQLite 等二进制文件用等长掩码(`ApplyKeepLength`)避免破坏文件结构;本地归档永不被改写;
+- **codex 原生写入的健壮性**:session_meta 由 Rust 端严格反序列化,字段模板取自本机最新真实会话(保证 cli_version 与枚举值匹配当前安装版本),仅覆盖 id/timestamp/cwd;
+- **CLI 对 agent 的契约**(参照 agent-cli-guide):非 TTY 默认输出 JSON、尊重 `NO_COLOR`、`--dry-run` 成功退出码 10、错误为机器可读 JSON(type/suggestion/retryable)、`tape schema` 提供命令树自省。
 
 每个里程碑独立可发布、独立有价值(M1 就已经解决"统一归档+检索"的核心痛点)。
 
