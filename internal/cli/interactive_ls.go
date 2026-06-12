@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/chenhg5/tape/internal/core/model"
@@ -116,15 +117,17 @@ func runSessionAction(app *App, sess *model.Session) error {
 	return nil
 }
 
-// copyAndNotify pushes s to the terminal clipboard via OSC 52 and
-// prints the same string in cyan as an audit / fallback line — that
-// way, even if the user's terminal silently dropped the escape (older
-// gnome-terminal, plain SSH without tmux passthrough, etc.) they can
-// still triple-click to copy from scrollback.
+// copyAndNotify pushes s onto the user's clipboard through whichever
+// channel actually works on their host, then prints the same string
+// in cyan as an audit / fallback line. The label `via <method>` makes
+// the chosen channel visible — important when debugging "the clipboard
+// didn't update", because the failure mode is almost always silent
+// (the terminal dropped the OSC 52, tmux ate it, …).
 func copyAndNotify(app *App, payload, what string) error {
-	copyOSC52(payload)
+	method := copyClipboard(payload)
 	app.lead()
-	fmt.Printf("  %s copied %s to clipboard\n", app.green("✓"), what)
+	fmt.Printf("  %s copied %s to clipboard %s\n",
+		app.green("✓"), what, app.gray("("+method+")"))
 	fmt.Printf("    %s %s\n", app.gray("·"), app.cyan(payload))
 	return nil
 }
@@ -219,13 +222,88 @@ func resumeInPlace(app *App, sess *model.Session) error {
 	return execAgent(binPath, args, os.Environ())
 }
 
-// copyOSC52 writes the OSC 52 clipboard control sequence to stderr.
-// Modern terminals (iTerm2, Alacritty, kitty, WezTerm, foot, Windows
-// Terminal, recent gnome-terminal, tmux with `set -g set-clipboard on`)
-// place the bytes onto the system clipboard; older terminals silently
-// drop the sequence, which is why every caller follows up with a
-// printable fallback line.
-func copyOSC52(s string) {
+// copyClipboard tries several channels to land s on the user's system
+// clipboard, returning a short label naming whichever one was used.
+// SSH + tmux is the failure mode that motivated this multi-path
+// approach: a naked OSC 52 escape gets eaten by tmux unless several
+// non-default tmux options are set, so a single-channel "just write
+// OSC 52 to stderr" implementation looks broken to most tmux users.
+//
+// Order (highest reliability first):
+//
+//  1. tmux load-buffer -w -   (requires tmux ≥ 3.2; the `-w` flag asks
+//     tmux to also forward the buffer to the outer terminal's system
+//     clipboard via the right passthrough framing. Best path for the
+//     SSH + tmux case.)
+//
+//  2. tmux load-buffer -      (older tmux: lands in tmux's own buffer;
+//     user pastes with prefix + `]`. Strictly worse than #1 but still
+//     better than a silent OSC 52.)
+//
+//  3. Platform helpers — pbcopy / wl-copy / xclip / xsel / clip.exe.
+//     First match on $PATH wins. clip.exe gets WSL users to the
+//     Windows clipboard for free.
+//
+//  4. Raw OSC 52 to stderr.  Last-resort; the terminal can drop it
+//     silently, which is exactly why we always also print the payload
+//     so the user can triple-click out of scrollback.
+func copyClipboard(s string) string {
+	if os.Getenv("TMUX") != "" {
+		if err := pipeToCmd("tmux", []string{"load-buffer", "-w", "-"}, s); err == nil {
+			return "tmux load-buffer -w"
+		}
+		if err := pipeToCmd("tmux", []string{"load-buffer", "-"}, s); err == nil {
+			return "tmux buffer · paste with prefix+]"
+		}
+	}
+	for _, c := range clipboardHelpers() {
+		if _, err := exec.LookPath(c.bin); err != nil {
+			continue
+		}
+		if err := pipeToCmd(c.bin, c.args, s); err == nil {
+			return c.bin
+		}
+	}
+	emitOSC52(s)
+	return "OSC 52 · may be dropped silently — fallback line below is selectable"
+}
+
+type clipHelper struct {
+	bin  string
+	args []string
+}
+
+// clipboardHelpers lists the per-OS shell commands we try in
+// preference order. The ordering matters: on Linux we try Wayland's
+// wl-copy before the X11 tools so a Sway/Hyprland user picks up the
+// right backend; clip.exe is listed last because it only works in
+// WSL, where xclip / xsel typically aren't installed anyway.
+func clipboardHelpers() []clipHelper {
+	switch runtime.GOOS {
+	case "darwin":
+		return []clipHelper{{"pbcopy", nil}}
+	case "windows":
+		return []clipHelper{{"clip", nil}}
+	default: // linux + other unixes
+		return []clipHelper{
+			{"wl-copy", nil},
+			{"xclip", []string{"-selection", "clipboard"}},
+			{"xsel", []string{"--clipboard", "--input"}},
+			{"clip.exe", nil}, // WSL → Windows host
+		}
+	}
+}
+
+func pipeToCmd(bin string, args []string, stdin string) error {
+	c := exec.Command(bin, args...)
+	c.Stdin = strings.NewReader(stdin)
+	return c.Run()
+}
+
+// emitOSC52 writes the OSC 52 clipboard control sequence to stderr.
+// Kept as a separate helper so the wire format stays trivial to unit-
+// test even as copyClipboard's strategy stack evolves around it.
+func emitOSC52(s string) {
 	enc := base64.StdEncoding.EncodeToString([]byte(s))
 	fmt.Fprintf(os.Stderr, "\x1b]52;c;%s\x07", enc)
 }

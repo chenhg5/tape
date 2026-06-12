@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -81,10 +82,71 @@ func TestAgentLaunchHintDistinguishesNativeResume(t *testing.T) {
 	}
 }
 
-// TestCopyOSC52Encoding pins the wire format of the OSC 52 escape we
+// TestEmitOSC52Encoding pins the wire format of the OSC 52 escape we
 // emit. Bugs here are silent because most terminals just drop the
 // sequence instead of raising — so we lock it down in a test.
-func TestCopyOSC52Encoding(t *testing.T) {
+func TestEmitOSC52Encoding(t *testing.T) {
+	got := captureStderr(t, func() { emitOSC52("tape/abc-123") })
+	want := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte("tape/abc-123")) + "\x07"
+	if got != want {
+		t.Errorf("OSC 52 output = %q, want %q", got, want)
+	}
+}
+
+// TestCopyClipboardFallsBackToOSC52 verifies the last-resort path
+// fires when no $TMUX and no helper binaries are reachable on $PATH.
+// We blank $PATH (and force-clear $TMUX) for the duration of the test
+// so the strategy stack drops all the way through.
+func TestCopyClipboardFallsBackToOSC52(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("PATH", "")
+
+	var method string
+	got := captureStderr(t, func() { method = copyClipboard("payload-xyz") })
+
+	wantEsc := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte("payload-xyz")) + "\x07"
+	if got != wantEsc {
+		t.Errorf("OSC 52 fallback bytes = %q, want %q", got, wantEsc)
+	}
+	if !strings.HasPrefix(method, "OSC 52") {
+		t.Errorf("method label = %q, want it to start with %q", method, "OSC 52")
+	}
+}
+
+// TestClipboardHelpersIncludeReasonableDefaults sanity-checks the
+// per-OS helper list so a future refactor doesn't accidentally leave
+// e.g. Linux with no candidate at all.
+func TestClipboardHelpersIncludeReasonableDefaults(t *testing.T) {
+	hs := clipboardHelpers()
+	if len(hs) == 0 {
+		t.Fatalf("no clipboard helpers for GOOS=%s", runtime.GOOS)
+	}
+	bins := make([]string, len(hs))
+	for i, h := range hs {
+		bins[i] = h.bin
+	}
+	want := map[string][]string{
+		"darwin":  {"pbcopy"},
+		"linux":   {"wl-copy", "xclip", "xsel", "clip.exe"},
+		"windows": {"clip"},
+	}
+	if expected, ok := want[runtime.GOOS]; ok {
+		for _, w := range expected {
+			found := false
+			for _, b := range bins {
+				if b == w {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("clipboardHelpers for %s missing %q (got %v)", runtime.GOOS, w, bins)
+			}
+		}
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -92,16 +154,10 @@ func TestCopyOSC52Encoding(t *testing.T) {
 	old := os.Stderr
 	os.Stderr = w
 	defer func() { os.Stderr = old }()
-
-	const payload = "tape/abc-123"
-	copyOSC52(payload)
+	fn()
 	w.Close()
-
-	got, _ := io.ReadAll(r)
-	want := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(payload)) + "\x07"
-	if string(got) != want {
-		t.Errorf("OSC 52 output = %q, want %q", got, want)
-	}
+	out, _ := io.ReadAll(r)
+	return string(out)
 }
 
 func slicesEqual(a, b []string) bool {
