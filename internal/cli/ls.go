@@ -39,6 +39,7 @@ func resolveDirFilter(raw string) string {
 // the title, to save horizontal space.
 func renderSessionList(app *App, sums []model.Summary, page, pageSize, total int) {
 	const idW, agentW, timeW, msgsW = 22, 11, 9, 6
+	app.lead()
 
 	header := fmt.Sprintf("  %s  %s  %s  %s  %s",
 		padRightDisp("ID", idW),

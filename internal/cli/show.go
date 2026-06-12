@@ -15,6 +15,7 @@ import (
 // message, color-coded by role. Tool calls show name + truncated input;
 // tool results are hidden unless --full.
 func renderSession(app *App, s *model.Session, full bool) {
+	app.lead()
 	title := s.Title
 	if title == "" {
 		title = "(untitled)"

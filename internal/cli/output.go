@@ -118,6 +118,20 @@ func (a *App) agentColor(agent string) string {
 	}
 }
 
+// lead prints one blank line at the top of a human-facing output block.
+// Every renderXxx helper (and the human branch of any command that
+// writes a final summary) calls this once on entry so the first row of
+// real content never sits flush against the user's previous prompt —
+// which felt cramped, especially in zsh themes that don't add their own
+// trailing newline. The JSON path skips this because agents parse line
+// by line and a leading blank line breaks naive JSONL consumers.
+func (a *App) lead() {
+	if a.useJSON() {
+		return
+	}
+	fmt.Println()
+}
+
 // cliError is a machine-actionable error (agent-cli-guide principle 9).
 type cliError struct {
 	Type       string `json:"error"`

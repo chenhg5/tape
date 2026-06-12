@@ -55,6 +55,7 @@ func newIndexCmd(app *App) *cobra.Command {
 			if app.useJSON() {
 				return emitJSON(map[string]any{"indexed": n})
 			}
+			app.lead()
 			fmt.Printf("indexed %d session(s)\n", n)
 			return nil
 		},

@@ -124,6 +124,7 @@ func buildStats(sums []model.Summary, archiveBytes int64, now time.Time) overvie
 }
 
 func renderOverview(app *App, st overviewStats) {
+	app.lead()
 	if st.Sessions == 0 {
 		fmt.Println("the archive is empty.")
 		fmt.Printf("\n  %s\n\n", app.bold("tape sync"))

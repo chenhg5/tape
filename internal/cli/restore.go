@@ -156,6 +156,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 						return err
 					}
 				} else {
+					app.lead()
 					fmt.Printf("%s would restore %s (%d msg) to %s via %s\n",
 						app.gray("·"),
 						app.cyan(full),
@@ -177,6 +178,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 						"strategy": "native", "target": to, "source": full, "resume_command": resumeCmd,
 					})
 				}
+				app.lead()
 				fmt.Printf("%s restored %s as a native %s session.\n%s\n\n  %s\n",
 					app.green("✓"), app.cyan(full), app.agentColor(to),
 					app.gray("Resume it with:"),
@@ -194,6 +196,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 						"source": full, "handoff_file": output, "start_command": start,
 					})
 				}
+				app.lead()
 				fmt.Printf("%s full transcript written to %s\n%s\n\n  %s\n",
 					app.green("✓"), app.cyan(output),
 					app.gray("Open the next agent and ask it to read the file, e.g.:"),
@@ -227,6 +230,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 						"project_root": projectRoot,
 					})
 				}
+				app.lead()
 				fmt.Printf("%s transcript: %s\n%s memory:     %s\n%s\n\n  %s\n",
 					app.green("✓"), app.cyan(handoffAbs),
 					app.green("✓"), app.cyan(memAbs),
@@ -255,6 +259,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 						"source": full, "handoff_file": output, "start_command": start,
 					})
 				}
+				app.lead()
 				fmt.Printf("%s handoff written to %s %s\n%s\n\n  %s\n",
 					app.green("✓"), app.cyan(output), app.gray("("+method+")"),
 					app.gray("Start the next agent with:"),

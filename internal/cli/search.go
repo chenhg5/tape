@@ -27,6 +27,7 @@ const hitsPerSession = 3
 // Sessions appear in the order the index returned them (newest-first by
 // default, BM25 when --sort relevance is set).
 func renderHits(app *App, hits []ports.Hit, query string, page int, hasMore bool) {
+	app.lead()
 	type group struct {
 		hits []ports.Hit
 	}

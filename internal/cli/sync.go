@@ -19,6 +19,7 @@ import (
 //
 // The leading glyph reflects status: ✓ ok, ! errors, · skipped/missing.
 func renderSyncReport(app *App, report service.SyncReport) {
+	app.lead()
 	for _, s := range report.Sources {
 		label := s.Agent
 		if s.Host != "" {
