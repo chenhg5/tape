@@ -10,17 +10,29 @@ import (
 	"github.com/chenhg5/tape/internal/remote"
 )
 
-// renderSyncReport prints one row per scanned source, then a colored
-// summary line. Layout:
+// renderSyncReport prints one row per *installed* source, then a
+// colored summary line. Layout:
 //
 //	✓ claude-code         scanned 38   archived  0   skipped 38
 //	✓ codex@build-server  scanned 13   archived  1   skipped 12
-//	· cursor              not installed
 //
-// The leading glyph reflects status: ✓ ok, ! errors, · skipped/missing.
+// Agents we couldn't find on disk are intentionally omitted — users
+// have no action they can take on "you didn't install qoder", and the
+// list grows every time we add another adapter. The footer rolls them
+// up as a single dim "(N agents not installed)" count so the
+// information is still discoverable for the curious without dominating
+// the report. The JSON payload (`tape sync --json`) keeps every source,
+// including missing ones — that path is for diagnostics, not eyeballs.
+//
+// Leading glyphs: ✓ ok, ! errors, · scanned-but-no-new.
 func renderSyncReport(app *App, report service.SyncReport) {
 	app.lead()
+	missing := 0
 	for _, s := range report.Sources {
+		if !s.Found {
+			missing++
+			continue
+		}
 		label := s.Agent
 		if s.Host != "" {
 			label = s.Agent + "@" + s.Host
@@ -29,11 +41,6 @@ func renderSyncReport(app *App, report service.SyncReport) {
 		labelCol := padRightDisp(label, labelW)
 		colored := app.agentColor(s.Agent) + labelCol[len(s.Agent):]
 
-		if !s.Found {
-			fmt.Printf("  %s %s %s\n",
-				app.gray("·"), colored, app.gray("not installed"))
-			continue
-		}
 		mark := app.green("✓")
 		if len(s.Errors) > 0 {
 			mark = app.red("!")
@@ -56,14 +63,18 @@ func renderSyncReport(app *App, report service.SyncReport) {
 	a, sk := report.Archived(), report.Skipped()
 	switch {
 	case a > 0:
-		fmt.Printf("\n%s %s\n",
+		fmt.Printf("\n%s %s",
 			app.green("✓"),
 			app.bold(fmt.Sprintf("%d new session(s) archived", a)))
 	case sk > 0:
-		fmt.Printf("\n%s %s\n", app.gray("·"), app.gray("nothing new"))
+		fmt.Printf("\n%s %s", app.gray("·"), app.gray("nothing new"))
 	default:
-		fmt.Printf("\n%s %s\n", app.gray("·"), app.gray("no agent data found"))
+		fmt.Printf("\n%s %s", app.gray("·"), app.gray("no agent data found"))
 	}
+	if missing > 0 {
+		fmt.Printf("  %s", app.gray(fmt.Sprintf("(%d agent(s) not installed)", missing)))
+	}
+	fmt.Println()
 }
 
 func newSyncCmd(app *App) *cobra.Command {
