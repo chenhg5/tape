@@ -59,31 +59,34 @@ func (a *App) brand(xterm256 int, s string) string {
 	return a.paint(fmt.Sprintf("38;5;%d", xterm256), s)
 }
 
-// Agent brand palette. Picked from the xterm-256 cube so the colors stay
-// crisp on dark and light terminals alike; the previous (173/105) pair felt
-// too saturated against the white-on-black output of most agents.
+// Agent brand palette. All entries live in the upper xterm-256 cube
+// (#afxxxx / #d7xxxx / #ffxxxx), giving us washed-out pastels that read
+// cleanly on both dark and light terminals without the eye-searing
+// saturation of the original brand colors. We aim for one row in each
+// hue family — blue, pink, green, peach — so 10 agents stay visually
+// distinct even at a glance:
 //
-//	claude-code → xterm 216  light peach      (≈ #ffaf87, washed Anthropic orange)
-//	codex       → xterm 189  pale periwinkle  (≈ #d7d7ff, faded dreamy violet)
 //	cursor      → xterm 252  silver-gray      (≈ #d0d0d0, Cursor monochrome IDE)
-//	gemini      → xterm 117  sky-blue         (≈ #87d7ff, washed Google blue)
-//	qwen        → xterm 175  dusty-rose       (≈ #d787af, Alibaba magenta)
-//	iflow       → xterm 122  soft-aqua        (≈ #87ffd7, iFlow teal)
-//	aider       → xterm 180  warm-tan         (≈ #d7af87, paper / pencil hue)
-//	opencode    → xterm 156  spring-green     (≈ #afff87, opencode terminal green)
-//	antigravity → xterm 147  cornflower-blue  (≈ #afafff, Antigravity 2.0 violet)
-//	qoder       → xterm 207  bright-magenta   (≈ #ff5fff, Qoder neon brand)
+//	gemini      → xterm 153  pale-sky         (≈ #afd7ff, washed Google blue)
+//	antigravity → xterm 147  soft-periwinkle  (≈ #afafff, gemini-successor violet)
+//	codex       → xterm 189  pale-periwinkle  (≈ #d7d7ff, faded dreamy violet)
+//	qwen        → xterm 218  cherry-blossom   (≈ #ffafd7, washed Alibaba pink)
+//	qoder       → xterm 225  light-lilac      (≈ #ffd7ff, iflow-successor pastel)
+//	claude-code → xterm 216  light-peach      (≈ #ffaf87, washed Anthropic orange)
+//	aider       → xterm 223  soft-cream       (≈ #ffd7af, paper / pencil pastel)
+//	iflow       → xterm 158  mint             (≈ #afffd7, washed iFlow teal)
+//	opencode    → xterm 194  pale-leaf        (≈ #d7ffd7, washed terminal green)
 const (
 	colorClaude      = 216
 	colorCodex       = 189
 	colorCursor      = 252
-	colorGemini      = 117
-	colorQwen        = 175
-	colorIFlow       = 122
-	colorAider       = 180
-	colorOpencode    = 156
+	colorGemini      = 153
 	colorAntigravity = 147
-	colorQoder       = 207
+	colorQwen        = 218
+	colorQoder       = 225
+	colorIFlow       = 158
+	colorAider       = 223
+	colorOpencode    = 194
 )
 
 // agentColor paints the agent name in its brand color so rows group visually
