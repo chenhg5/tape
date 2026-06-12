@@ -1,0 +1,7 @@
+{"type":"mode","mode":"normal","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"type":"ai-title","aiTitle":"Demo auth discussion","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"为什么不用 OAuth2?"},"uuid":"u1","timestamp":"2026-06-01T10:00:00.000Z","cwd":"/root/code/demo","sessionId":"11111111-2222-3333-4444-555555555555","version":"2.1.0","gitBranch":"main"}
+{"parentUuid":"u1","isSidechain":false,"type":"assistant","message":{"role":"assistant","model":"claude-fable-5","content":[{"type":"text","text":"JWT is simpler here."},{"type":"tool_use","id":"t1","name":"Read","input":{"path":"/etc/hosts"}}]},"uuid":"a1","timestamp":"2026-06-01T10:00:05.000Z","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"parentUuid":"a1","isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"127.0.0.1 localhost"}]}]},"uuid":"u2","timestamp":"2026-06-01T10:00:06.000Z","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"parentUuid":"x","isSidechain":true,"type":"user","message":{"role":"user","content":"sidechain noise"},"uuid":"s1","timestamp":"2026-06-01T10:00:07.000Z","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"type":"unknown-future-type","whatever":true}

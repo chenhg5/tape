@@ -1,0 +1,8 @@
+{"timestamp":"2026-06-07T06:04:59.711Z","type":"session_meta","payload":{"id":"019ea0af-3d6a-7393-8ccf-a4ae49f116c3","timestamp":"2026-06-07T06:04:59.630Z","cwd":"/root/code/demo","originator":"codex_exec","cli_version":"0.137.0","source":"exec","model_provider":"openai","git":{"branch":"main"},"base_instructions":{"text":"You are Codex..."}}}
+{"timestamp":"2026-06-07T06:05:00.000Z","type":"turn_context","payload":{"cwd":"/root/code/demo","model":"gpt-5.3-codex"}}
+{"timestamp":"2026-06-07T06:05:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>noise</environment_context>"},{"type":"input_text","text":"帮我提交代码"}]}}
+{"timestamp":"2026-06-07T06:05:02.000Z","type":"response_item","payload":{"type":"reasoning","summary":[],"content":null}}
+{"timestamp":"2026-06-07T06:05:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"git\",\"status\"]}","call_id":"c1"}}
+{"timestamp":"2026-06-07T06:05:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"output\":\"On branch main\",\"metadata\":{}}"}}
+{"timestamp":"2026-06-07T06:05:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"已提交完成。"}]}}
+{"timestamp":"2026-06-07T06:05:06.000Z","type":"event_msg","payload":{"type":"agent_message","message":"ignored"}}
