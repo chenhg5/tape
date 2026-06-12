@@ -396,6 +396,7 @@ tape stats
 | **M3 恢复** | `brief` 策略(LLMRunner: claude/codex/cursor CLI)、`native` 策略(claude↔codex 双向)、`restore/rewind` | Claude 会话在 Codex 原生 resume 成功;失败可降级 | ✅ claude→codex 原生 resume 实测成功;brief(codex 总结)与模板降级验证 |
 | **M3.5 Phase A 扩源** | Gemini CLI / Qwen Code / iFlow / Aider / OpenCode 五个新 Source;`memory` 策略适配各家 `<AGENT>.md` 约定;品牌色+交互 picker 列表 | 8 家 agent 全部跑通 `sync → search → show → restore (memory/transcript)` | ✅ 全部解析器单测+端到端验证(`TestPhaseAAgents`)，OpenCode 走 Drizzle SQLite (`session/message/part`) |
 | **M3.6 EOL 救援** | Antigravity CLI(Gemini CLI 后继,2026/06/18 切换)、Qoder CLI(iFlow CLI 后继,iFlow 已 2026/04/17 停服)两个继任者;支持矩阵加 `status` 列(active/succeeded by …/EOL)透明披露 vendor 状态 | 10 家 agent 完整覆盖;用户能从已停服 CLI 抢救历史 | ✅ Antigravity 独立 step 解析器(`step_index/source/type`),Qoder 复用 Qwen ChatRecord schema |
+| **M3.7 交互式 ls** | `tape ls` 在 TTY 下默认进 picker → 选中 session 后弹 Resume here / Show / Copy ID / Copy resume command 二级菜单;Resume 走 `syscall.Exec(unix)`/`exec.Command(win)` 把终端整个交给 agent,claude/codex/antigravity/qoder 自动带 `--resume <id>`;复制走 OSC 52 终端原生剪贴板,`--print` 退回原表格 | 单键完成"找会话→进会话",不再让用户手动拼 `cd … && claude --resume <uuid>` | ✅ pure logic 单测覆盖 `agentResumeArgs` / `resumeCmdline` / OSC 52 wire format |
 | **M4 记忆与 agent 化** | Extractor(llm/rule)、`memory`、`ask`、`stats`、MCP server、`init --agents-md` | 任意 agent 通过 MCP 查询历史并拿到交接文档 | 待做 |
 
 M3 后增量交付:

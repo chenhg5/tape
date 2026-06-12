@@ -81,21 +81,29 @@ func renderSessionList(app *App, sums []model.Summary, page, pageSize, total int
 func newLsCmd(app *App) *cobra.Command {
 	var agent, dir, since string
 	var limit, page int
+	var printOnly bool
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List archived sessions",
+		Short: "List archived sessions (interactive on a TTY)",
 		Long: `List archived sessions, newest first.
+
+On a TTY this drops you into an interactive picker: ↑/↓ to browse,
+Enter to act on a session (Resume here / Show transcript / Copy ID /
+Copy resume command). Pass --print to keep the legacy plain table,
+e.g. for scripts or screenshots. --json and piped output always emit
+the table-equivalent JSON contract.
 
 --dir <path> restricts the list to sessions whose working directory was
 <path> (or one of its descendants). Use "." for the current directory —
-this is the most common filter, e.g. "tape ls --dir ." inside a repo.
+the most common filter, e.g. "tape ls --dir ." inside a repo.
 
-Pagination: --limit N --page P returns page P (1-based) of N items each. JSON
-output always includes total/page/has_more so agents can iterate without
-parsing prose.`,
-		Example: `  tape ls --dir .                    # sessions for the current repo
+Pagination: --limit N --page P returns page P (1-based) of N items each.
+The interactive picker honors --limit (defaults to 30 there) but
+ignores --page; for deep browsing combine --print with --page.`,
+		Example: `  tape ls                            # interactive picker on a TTY
+  tape ls --dir .                    # sessions for the current repo
   tape ls --agent codex
-  tape ls --limit 20 --page 3        # third page of twenty`,
+  tape ls --print --limit 20 --page 3  # third page, plain table`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if page < 1 {
@@ -109,6 +117,19 @@ parsing prose.`,
 				return err
 			}
 			dir = resolveDirFilter(dir)
+			// Interactive path: TTY, no --json, no --print, no
+			// explicit pagination. The picker uses a single page of
+			// `limit` items (defaults to 30 — see below); pagination is
+			// the table path's affordance.
+			if !printOnly && app.interactive() && !cmd.Flag("page").Changed {
+				pickerLimit := limit
+				if !cmd.Flag("limit").Changed {
+					pickerLimit = 30 // picker can't scroll yet — keep it scrollable-by-eye
+				}
+				return runInteractiveLs(cmd.Context(), app, ports.Filter{
+					Agent: agent, Project: dir, Since: sinceTime, Limit: pickerLimit,
+				})
+			}
 			filter := ports.Filter{
 				Agent: agent, Project: dir, Since: sinceTime,
 				Limit: limit, Offset: (page - 1) * limit,
@@ -149,6 +170,7 @@ parsing prose.`,
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")
 	cmd.Flags().IntVar(&page, "page", 1, "page number (1-based)")
+	cmd.Flags().BoolVar(&printOnly, "print", false, "skip the interactive picker, just print the table")
 	return cmd
 }
 
