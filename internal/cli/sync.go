@@ -80,17 +80,25 @@ func renderSyncReport(app *App, report service.SyncReport) {
 func newSyncCmd(app *App) *cobra.Command {
 	var since string
 	var remotes []string
+	var full bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Archive new or changed sessions from all agents",
 		Long: `Scans every installed agent for new or changed sessions and archives them.
 Incremental and idempotent: unchanged sessions are skipped by checksum.
 
+Use --full to bypass the staleness short-circuit and re-archive every
+session from scratch — handy after a parser change, a corrupted archive,
+or when a new IR field needs backfilling. The on-disk archive is
+rewritten in place; nothing is deleted.
+
 With --remote, session files are first mirrored from SSH-reachable machines
 (plain ssh + tar; nothing to install remotely) and archived alongside local
-ones. Remote sessions carry a "host" meta field.`,
+ones. Remote sessions carry a "host" meta field, are tagged @host in
+ls / search output, and resume over SSH automatically.`,
 		Example: `  tape sync
   tape sync --since 7d
+  tape sync --full
   tape sync --remote dev@build-server --remote user@10.0.0.7`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -132,6 +140,7 @@ ones. Remote sessions carry a "host" meta field.`,
 			pb := app.newProgress("syncing", 0)
 			sync := &service.Sync{
 				Sources: sources, Archive: app.Archive(), Index: ix,
+				Full: full,
 				OnSourceStart: func(agent, host string, total int) {
 					label := agent
 					if host != "" {
@@ -164,5 +173,6 @@ ones. Remote sessions carry a "host" meta field.`,
 	}
 	cmd.Flags().StringVar(&since, "since", "", "only scan sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().StringArrayVar(&remotes, "remote", nil, "also sync agent sessions from an SSH host (repeatable)")
+	cmd.Flags().BoolVar(&full, "full", false, "re-archive every session, ignoring checksum staleness")
 	return cmd
 }

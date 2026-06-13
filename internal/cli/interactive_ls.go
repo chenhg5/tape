@@ -54,6 +54,12 @@ func pickSessionFromSummaries(app *App, sums []model.Summary, prompt string) (mo
 		if title == "" {
 			title = s.Project
 		}
+		// Remote sessions: dim @host badge before the title makes it
+		// instantly clear which rows live on another machine (and will
+		// need an SSH resume).
+		if s.Host != "" {
+			title = "@" + s.Host + "  " + title
+		}
 		labels[i] = fmt.Sprintf("%s  %s  %s  %s",
 			app.cyan(padRightDisp(shortID(s.ID), 22)),
 			app.agentColor(padRightDisp(s.Agent, 11)),
@@ -79,9 +85,14 @@ type sessionAction struct {
 // selected — keep the menu honest and the path-to-action short.
 func runSessionAction(app *App, sess *model.Session) error {
 	resumeCmd := resumeCmdline(sess)
+	resumeLabel := "Resume here"
+	resumeDesc := "cd into the session's cwd and " + agentLaunchHint(sess.Agent, sess.SourceID)
+	if host := sess.Meta["host"]; host != "" {
+		resumeLabel = "Resume on " + host
+		resumeDesc = remoteResumeHint(host, sess.Agent, sess.SourceID)
+	}
 	actions := []sessionAction{
-		{"resume", "Resume here",
-			"cd into the session's cwd and " + agentLaunchHint(sess.Agent, sess.SourceID)},
+		{"resume", resumeLabel, resumeDesc},
 		{"show", "Show transcript",
 			"pretty-print this session in the current terminal"},
 		{"copy_id", "Copy session ID",
@@ -143,6 +154,8 @@ func copyAndNotify(app *App, payload, what string) error {
 //	codex        codex resume <uuid>
 //	antigravity  agy --conversation <uuid>
 //	qoder        qodercli -r <session-id>
+//	mimocode     mimo --session <session-id>
+//	kimi-code    kimi --session <session-id>
 //	others       (no public resume flag at time of writing)
 func agentResumeArgs(agent, sourceID string) []string {
 	if sourceID == "" {
@@ -157,6 +170,10 @@ func agentResumeArgs(agent, sourceID string) []string {
 		return []string{"--conversation", sourceID}
 	case "qoder":
 		return []string{"-r", sourceID}
+	case "mimocode":
+		return []string{"--session", sourceID}
+	case "kimi-code":
+		return []string{"--session", sourceID}
 	}
 	return nil
 }
@@ -164,15 +181,38 @@ func agentResumeArgs(agent, sourceID string) []string {
 // resumeCmdline renders the shell command a user would run to resume
 // the session manually. Used by both the menu label and the
 // "Copy resume command" action.
+//
+// For sessions mirrored in from a remote host (Meta["host"] non-empty)
+// we wrap the agent invocation in `ssh <host> -t '...'` and prepend a
+// cd to the original cwd, so the user can paste a single command that
+// lands them inside the conversation on the right machine. The remote
+// shell is invoked with -t (force PTY) because every agent we support
+// is interactive.
 func resumeCmdline(sess *model.Session) string {
 	bin, _ := agentLaunchBin(sess.Agent)
 	parts := append([]string{bin}, agentResumeArgs(sess.Agent, sess.SourceID)...)
-	return strings.Join(parts, " ")
+	cmd := strings.Join(parts, " ")
+	if host := sess.Meta["host"]; host != "" {
+		remote := cmd
+		if sess.CWD != "" {
+			remote = "cd " + shellQuote(sess.CWD) + " && " + cmd
+		}
+		return "ssh " + host + " -t " + shellQuote(remote)
+	}
+	return cmd
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single
+// quotes the POSIX way ('\''). Used when building remote ssh commands
+// so a cwd with spaces or odd characters survives the round trip.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // agentLaunchHint feeds the action menu description: explains whether
 // the launch will land directly inside the conversation or in the
-// agent's built-in picker.
+// agent's built-in picker. For remote sessions it makes the SSH hop
+// explicit so the user isn't surprised when Resume opens an ssh shell.
 func agentLaunchHint(agent, sourceID string) string {
 	bin, _ := agentLaunchBin(agent)
 	if len(agentResumeArgs(agent, sourceID)) > 0 {
@@ -181,11 +221,33 @@ func agentLaunchHint(agent, sourceID string) string {
 	return "launch " + bin + " (use its built-in /resume to pick up here)"
 }
 
+// remoteResumeHint returns the action-menu description when the
+// session lives on another machine, instead of the in-place launcher
+// hint. Kept separate from agentLaunchHint to keep the local path
+// readable.
+func remoteResumeHint(host, agent, sourceID string) string {
+	bin, _ := agentLaunchBin(agent)
+	if len(agentResumeArgs(agent, sourceID)) > 0 {
+		return "ssh " + host + " -t and run " + bin + " resumed inside this conversation"
+	}
+	return "ssh " + host + " -t and launch " + bin + " (use its /resume to pick up here)"
+}
+
 // resumeInPlace cd's into the session's cwd and execs the matching
 // agent binary so the user lands inside the conversation with one
 // keystroke. Best-effort cwd: if the directory no longer exists we
 // just launch the agent wherever tape was invoked from.
+//
+// For sessions carrying Meta["host"] (mirrored in via sync --remote)
+// resume can't run locally — the session data and the agent binary
+// both live on the other machine. We exec ssh -t instead, scripting
+// the remote shell to cd into the original cwd and launch the agent
+// with the right resume flag, so the user still lands inside the
+// conversation with one keystroke.
 func resumeInPlace(app *App, sess *model.Session) error {
+	if host := sess.Meta["host"]; host != "" {
+		return resumeRemote(app, sess, host)
+	}
 	bin, ok := agentLaunchBin(sess.Agent)
 	if !ok {
 		return cliError{
@@ -220,6 +282,50 @@ func resumeInPlace(app *App, sess *model.Session) error {
 			app.gray("!"), app.cyan(sess.CWD))
 	}
 	return execAgent(binPath, args, os.Environ())
+}
+
+// resumeRemote opens an interactive ssh session to host, cd's into
+// the original working directory (best-effort — we still run the
+// agent if cd fails), and execs the agent with its resume flag.
+// We do NOT check for ssh on $PATH because /usr/bin/ssh is ubiquitous
+// and absent only on heavily stripped images; the error from exec
+// would be self-explanatory anyway.
+func resumeRemote(app *App, sess *model.Session, host string) error {
+	bin, ok := agentLaunchBin(sess.Agent)
+	if !ok {
+		// Without a launcher mapping we don't know what to run on the
+		// remote side either. Fail loud with the same suggestion the
+		// local path uses.
+		return cliError{
+			Type:       "no_launcher",
+			Message:    fmt.Sprintf("don't know how to launch %s on remote", sess.Agent),
+			Suggestion: "use `tape restore` to write a transcript / memory file instead",
+		}
+	}
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		return cliError{
+			Type:       "ssh_missing",
+			Message:    "ssh not found on $PATH (needed to resume a remote session)",
+			Suggestion: "install openssh-client or `tape show <id>` to view locally",
+		}
+	}
+	parts := append([]string{bin}, agentResumeArgs(sess.Agent, sess.SourceID)...)
+	remote := strings.Join(parts, " ")
+	if sess.CWD != "" {
+		// `cd ... ||` (not `&&`) is intentional: if the dir disappeared
+		// on the remote we still want the agent to launch and let the
+		// user pick a new cwd, rather than dropping them into an empty
+		// shell with a cryptic error.
+		remote = "cd " + shellQuote(sess.CWD) + " 2>/dev/null; " + remote
+	}
+	args := []string{"ssh", host, "-t", remote}
+	app.lead()
+	fmt.Fprintf(os.Stderr, "  %s exec %s\n", app.gray("·"), app.bold(strings.Join(args, " ")))
+	if sess.CWD != "" {
+		fmt.Fprintf(os.Stderr, "    %s remote cwd %s\n", app.gray("·"), app.cyan(sess.CWD))
+	}
+	return execAgent(sshPath, args, os.Environ())
 }
 
 // copyClipboard tries several channels to land s on the user's system

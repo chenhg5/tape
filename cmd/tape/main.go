@@ -14,6 +14,8 @@ import (
 	"github.com/chenhg5/tape/internal/source/cursor"
 	"github.com/chenhg5/tape/internal/source/gemini"
 	"github.com/chenhg5/tape/internal/source/iflow"
+	"github.com/chenhg5/tape/internal/source/kimicode"
+	"github.com/chenhg5/tape/internal/source/mimo"
 	"github.com/chenhg5/tape/internal/source/opencode"
 	"github.com/chenhg5/tape/internal/source/qoder"
 	"github.com/chenhg5/tape/internal/source/qwen"
@@ -38,6 +40,8 @@ func main() {
 			qoder.New(home),
 			aider.New(home),
 			opencode.New(home),
+			mimo.New(home),
+			kimicode.New(home),
 		}
 	}
 	app := &cli.App{

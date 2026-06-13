@@ -50,12 +50,29 @@ const agentName = "opencode"
 // Source reads opencode sessions from one of the platform-canonical
 // data directories. We resolve the first matching path at construction
 // time — opencode itself does the same XDG resolution.
+//
+// The (dbPath, agent) fields are exposed via NewWith so downstream
+// forks of opencode that ship the same Drizzle schema — Xiaomi's
+// MiMo Code is the first one tape supports — can plug in their own
+// db location and agent label without re-implementing the parser.
 type Source struct {
 	dbPath string
+	agent  string
 }
 
 func New(home string) *Source {
-	return &Source{dbPath: resolveDBPath(home)}
+	return NewWith(resolveDBPath(home), agentName)
+}
+
+// NewWith builds a Source against an arbitrary SQLite database that
+// follows opencode's session / message / part schema, tagging every
+// emitted session with the supplied agent label. Used by drop-in
+// forks (e.g. mimocode); regular opencode users go through New().
+func NewWith(dbPath, agent string) *Source {
+	if agent == "" {
+		agent = agentName
+	}
+	return &Source{dbPath: dbPath, agent: agent}
 }
 
 // resolveDBPath honors $XDG_DATA_HOME first (which opencode respects),
@@ -72,7 +89,7 @@ func resolveDBPath(home string) string {
 	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
 }
 
-func (s *Source) Name() string { return agentName }
+func (s *Source) Name() string { return s.agent }
 
 func (s *Source) Detect(ctx context.Context) (bool, string, error) {
 	st, err := os.Stat(s.dbPath)
@@ -130,7 +147,7 @@ func (s *Source) List(ctx context.Context, since time.Time) ([]ports.SessionRef,
 			continue
 		}
 		refs = append(refs, ports.SessionRef{
-			Agent:     agentName,
+			Agent:     s.agent,
 			SourceID:  id,
 			Files:     []string{s.dbPath},
 			UpdatedAt: updatedAt,
@@ -230,8 +247,8 @@ func (s *Source) Load(ctx context.Context, ref ports.SessionRef) (*model.Session
 	}
 
 	sess := &model.Session{
-		ID:        agentName + "/" + sr.ID,
-		Agent:     agentName,
+		ID:        s.agent + "/" + sr.ID,
+		Agent:     s.agent,
 		SourceID:  sr.ID,
 		Title:     sr.Title,
 		CWD:       sr.Directory,

@@ -161,7 +161,7 @@ func caseInsensitiveReplace(s, old, replacement string) string {
 }
 
 func newSearchCmd(app *App) *cobra.Command {
-	var agent, dir, since, sort string
+	var agent, dir, since, sort, host string
 	var limit, page int
 	var printOnly bool
 	cmd := &cobra.Command{
@@ -218,6 +218,7 @@ the most useful match is usually "the conversation I just had". Switch to
 				Text:    strings.Join(args, " "),
 				Agent:   agent,
 				Project: dir,
+				Host:    host,
 				Since:   t,
 				Sort:    sort,
 				Limit:   limit + 1,
@@ -261,6 +262,7 @@ the most useful match is usually "the conversation I just had". Switch to
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent")
 	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
+	cmd.Flags().StringVar(&host, "host", "", `filter by origin host ("local" or ssh-host)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().StringVar(&sort, "sort", "recent", "result order: 'recent' (newest session first) or 'relevance' (BM25)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")
@@ -302,6 +304,12 @@ func runInteractiveSearch(ctx context.Context, app *App, query string, hits []po
 		more := ""
 		if g.count > 1 {
 			more = "  " + app.gray(fmt.Sprintf("+%d more", g.count-1))
+		}
+		// Remote-origin hits: prefix snippet with a dim @host badge
+		// so the picker mirrors `tape ls` and the user knows ahead of
+		// time that Resume will SSH there.
+		if g.first.Host != "" {
+			snippet = "@" + g.first.Host + "  " + snippet
 		}
 		labels[i] = fmt.Sprintf("%s  %s  %s  %s%s",
 			app.cyan(padRightDisp(shortID(id), 22)),

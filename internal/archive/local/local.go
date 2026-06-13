@@ -153,6 +153,9 @@ func (a *Archive) List(ctx context.Context, f ports.Filter) ([]model.Summary, er
 		if f.Project != "" && !matchProject(m.Summary, f.Project) {
 			return nil
 		}
+		if !matchHost(m.Summary, f.Host) {
+			return nil
+		}
 		if !f.Since.IsZero() && m.Summary.UpdatedAt.Before(f.Since) {
 			return nil
 		}
@@ -205,6 +208,20 @@ func (a *Archive) Resolve(ctx context.Context, idOrPrefix string) (string, error
 		return matches[0], nil
 	default:
 		return "", fmt.Errorf("%q is ambiguous (%d matches, e.g. %s)", idOrPrefix, len(matches), matches[0])
+	}
+}
+
+// matchHost: "" passes every session, "local" passes only Host=="",
+// any other value matches that exact host. Centralizing the rule here
+// keeps the ls/search/sync UIs in lockstep.
+func matchHost(s model.Summary, host string) bool {
+	switch host {
+	case "":
+		return true
+	case "local":
+		return s.Host == ""
+	default:
+		return s.Host == host
 	}
 }
 

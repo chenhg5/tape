@@ -37,9 +37,13 @@ type Source interface {
 type Filter struct {
 	Agent   string
 	Project string // matches project slug prefix or cwd substring
-	Since   time.Time
-	Limit   int
-	Offset  int
+	// Host scopes results to sessions mirrored from a particular SSH
+	// host. The sentinel "local" matches only sessions parsed off this
+	// machine (Summary.Host == ""). Empty string means "no host filter".
+	Host   string
+	Since  time.Time
+	Limit  int
+	Offset int
 }
 
 // Archive is the durable session store: byte-for-byte raw copies plus the
@@ -58,6 +62,9 @@ type Query struct {
 	Text    string
 	Agent   string
 	Project string
+	// Host follows the same sentinel rules as Filter.Host: "" means
+	// no scope, "local" means Host == "", anything else is an exact match.
+	Host    string
 	Since   time.Time
 	Limit   int
 	Offset  int
@@ -70,8 +77,14 @@ type Query struct {
 }
 
 type Hit struct {
-	SessionID string    `json:"session_id"`
-	Agent     string    `json:"agent"`
+	SessionID string `json:"session_id"`
+	Agent     string `json:"agent"`
+	// Host is "" for local sessions, non-empty (e.g. "dev@build-01")
+	// for sessions mirrored in via `tape sync --remote`. Surfaced in
+	// the JSON contract so script consumers can split local/remote
+	// without an extra archive lookup, and used by the picker to tag
+	// remote rows and route resume through SSH.
+	Host      string    `json:"host,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	Project   string    `json:"project"`
 	MessageID string    `json:"message_id,omitempty"`

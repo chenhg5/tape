@@ -20,6 +20,8 @@ func TestAgentResumeArgs(t *testing.T) {
 		{"codex", []string{"resume", "uuid-123"}},
 		{"antigravity", []string{"--conversation", "uuid-123"}},
 		{"qoder", []string{"-r", "uuid-123"}},
+		{"mimocode", []string{"--session", "uuid-123"}},
+		{"kimi-code", []string{"--session", "uuid-123"}},
 		{"cursor", nil},
 		{"gemini", nil},
 		{"qwen", nil},
@@ -43,22 +45,53 @@ func TestAgentResumeArgs(t *testing.T) {
 }
 
 func TestResumeCmdline(t *testing.T) {
-	cases := []struct {
+	// Local path: just `<bin> [resume-args]`. No SSH, no cd.
+	local := []struct {
 		agent, sourceID, want string
 	}{
 		{"claude-code", "abc", "claude --resume abc"},
 		{"codex", "abc", "codex resume abc"},
 		{"antigravity", "abc", "agy --conversation abc"},
 		{"qoder", "abc", "qodercli -r abc"},
+		{"mimocode", "abc", "mimo --session abc"},
+		{"kimi-code", "abc", "kimi --session abc"},
 		{"cursor", "abc", "cursor-agent"}, // no native resume → bare launch
 		{"aider", "abc", "aider"},
 	}
-	for _, c := range cases {
+	for _, c := range local {
 		s := &model.Session{Agent: c.agent, SourceID: c.sourceID}
 		if got := resumeCmdline(s); got != c.want {
-			t.Errorf("resumeCmdline(%s/%s) = %q, want %q",
+			t.Errorf("local resumeCmdline(%s/%s) = %q, want %q",
 				c.agent, c.sourceID, got, c.want)
 		}
+	}
+
+	// Remote path: ssh <host> -t '<cd && cmd>'. cd is omitted when
+	// CWD is empty so resume still works on stale archives where the
+	// directory is unknown. Quoting uses POSIX single quotes so a cwd
+	// with spaces or odd characters survives the remote shell parse.
+	remote := []struct {
+		name, agent, sid, cwd, host, want string
+	}{
+		{"with-cwd", "claude-code", "abc", "/root/x", "user@build-01",
+			`ssh user@build-01 -t 'cd '\''/root/x'\'' && claude --resume abc'`},
+		{"no-cwd", "codex", "s-1", "", "h",
+			`ssh h -t 'codex resume s-1'`},
+		{"cwd-with-space", "codex", "s-1", "/home/me/with space", "h",
+			`ssh h -t 'cd '\''/home/me/with space'\'' && codex resume s-1'`},
+		{"agent-without-resume-flag", "cursor", "abc", "/p", "h",
+			`ssh h -t 'cd '\''/p'\'' && cursor-agent'`},
+	}
+	for _, c := range remote {
+		t.Run(c.name, func(t *testing.T) {
+			s := &model.Session{
+				Agent: c.agent, SourceID: c.sid, CWD: c.cwd,
+				Meta: map[string]string{"host": c.host},
+			}
+			if got := resumeCmdline(s); got != c.want {
+				t.Errorf("remote resumeCmdline:\n got  %s\n want %s", got, c.want)
+			}
+		})
 	}
 }
 
@@ -66,7 +99,7 @@ func TestAgentLaunchHintDistinguishesNativeResume(t *testing.T) {
 	// Agents with a CLI resume flag get a "resumed inside this
 	// conversation" hint; those without fall back to the built-in
 	// /resume picker phrasing.
-	resumeAgents := []string{"claude-code", "codex", "antigravity", "qoder"}
+	resumeAgents := []string{"claude-code", "codex", "antigravity", "qoder", "mimocode", "kimi-code"}
 	for _, a := range resumeAgents {
 		h := agentLaunchHint(a, "abc")
 		if !strings.Contains(h, "resumed inside this conversation") {

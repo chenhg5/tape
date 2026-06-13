@@ -144,7 +144,7 @@ func memoryFileHint(target string) string {
 	switch target {
 	case "claude-code":
 		return "CLAUDE.md"
-	case "codex", "cursor", "opencode", "qoder":
+	case "codex", "cursor", "opencode", "qoder", "kimi-code":
 		return "AGENTS.md"
 	case "gemini", "antigravity":
 		return "GEMINI.md"
@@ -152,6 +152,8 @@ func memoryFileHint(target string) string {
 		return "QWEN.md"
 	case "iflow":
 		return "IFLOW.md"
+	case "mimocode":
+		return "MEMORY.md"
 	case "aider":
 		return "CONVENTIONS.md"
 	default:
@@ -180,6 +182,7 @@ func pickRestore(ctx context.Context, app *App, dir string) (sessionID, target, 
 		"claude-code", "codex", "cursor", "opencode",
 		"antigravity", "gemini",
 		"qoder", "qwen", "iflow",
+		"mimocode", "kimi-code",
 		"aider",
 	} {
 		if a != src.Agent {

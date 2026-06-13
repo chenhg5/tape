@@ -13,10 +13,12 @@ package restore
 //   cursor      → AGENTS.md   (cursor-agent also reads AGENTS.md)
 //   opencode    → AGENTS.md   (opencode's /init writes here; CLAUDE.md is fallback)
 //   qoder       → AGENTS.md   (qodercli /init writes AGENTS.md per docs)
+//   kimi-code   → AGENTS.md   (kimi-code loads hierarchical AGENTS.md files)
 //   antigravity → GEMINI.md   (Antigravity keeps gemini-cli's <AGENT>.md convention)
 //   gemini      → GEMINI.md   (gemini-cli loads <Agent>.md from the cwd)
 //   qwen        → QWEN.md     (qwen-code likewise)
 //   iflow       → IFLOW.md    (iflow's docs explicitly call this out)
+//   mimocode    → MEMORY.md   (Xiaomi MiMo Code's project memory file)
 //   aider       → CONVENTIONS.md (aider's --read default convention file)
 //
 // Why not .cursor/rules/? It works, but AGENTS.md is the cross-agent
@@ -38,10 +40,12 @@ func memoryFile(agent string) string {
 	switch agent {
 	case "claude-code":
 		return "CLAUDE.md"
-	case "codex", "cursor", "opencode", "qoder":
+	case "codex", "cursor", "opencode", "qoder", "kimi-code":
 		return "AGENTS.md"
 	case "gemini", "antigravity":
 		return "GEMINI.md"
+	case "mimocode":
+		return "MEMORY.md"
 	case "qwen":
 		return "QWEN.md"
 	case "iflow":

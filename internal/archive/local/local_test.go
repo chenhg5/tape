@@ -128,6 +128,54 @@ func TestListFilters(t *testing.T) {
 	}
 }
 
+// TestListHostFilter pins the new --host scoping rule: empty matches
+// everything (the historical behavior), "local" matches only sessions
+// without a host stamp, any other value is an exact match. Regression
+// guard for the local-vs-remote split.
+func TestListHostFilter(t *testing.T) {
+	a := New(t.TempDir())
+	ctx := context.Background()
+	src := t.TempDir()
+
+	put := func(agent, id, host string) {
+		f := writeSourceFile(t, src, id+".jsonl", id)
+		ref := ports.SessionRef{Agent: agent, SourceID: id, Files: []string{f}}
+		_, sum, _ := a.Stale(ref)
+		s := demoSession(agent, id, "/p", 1)
+		if host != "" {
+			s.Meta = map[string]string{"host": host}
+		}
+		if err := a.Put(ctx, s, ref, sum); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("codex", "loc1", "")
+	put("codex", "loc2", "")
+	put("codex", "rem1", "dev@build-01")
+	put("codex", "rem2", "ci@runner-02")
+
+	all, _ := a.List(ctx, ports.Filter{})
+	if len(all) != 4 {
+		t.Fatalf("baseline: %d", len(all))
+	}
+
+	local, _ := a.List(ctx, ports.Filter{Host: "local"})
+	if len(local) != 2 {
+		t.Errorf(`Host:"local" should match the 2 host-less sessions, got %d`, len(local))
+	}
+
+	build, _ := a.List(ctx, ports.Filter{Host: "dev@build-01"})
+	if len(build) != 1 || build[0].ID != "codex/rem1" {
+		t.Errorf(`Host:"dev@build-01" want 1×codex/rem1, got %+v`, build)
+	}
+
+	// Summary must carry the host through so picker/ls can label it.
+	any, _ := a.List(ctx, ports.Filter{Host: "ci@runner-02"})
+	if len(any) != 1 || any[0].Host != "ci@runner-02" {
+		t.Errorf("Summary.Host not propagated: %+v", any)
+	}
+}
+
 func TestListEmptyArchive(t *testing.T) {
 	a := New(filepath.Join(t.TempDir(), "does-not-exist-yet"))
 	out, err := a.List(context.Background(), ports.Filter{})

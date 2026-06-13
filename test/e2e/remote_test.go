@@ -82,6 +82,66 @@ func TestRemoteSync(t *testing.T) {
 	if d["archived"] != float64(0) {
 		t.Errorf("re-sync archived = %v, want 0", d["archived"])
 	}
+
+	// sync --full re-archives every session even when nothing has
+	// changed, which is the whole point: parser-upgrade backfills.
+	// Without --remote it only re-walks local sources; with --remote
+	// it covers the mirror too. We assert both shapes so a regression
+	// in either path is caught.
+	d = e.mustRun(0, "sync", "--full").data(t)
+	if d["archived"] != float64(1) {
+		t.Errorf("--full local-only sync archived = %v, want 1", d["archived"])
+	}
+	d = e.mustRun(0, "sync", "--full", "--remote", "dev@build-server").data(t)
+	if d["archived"] != float64(2) {
+		t.Errorf("--full --remote sync archived = %v, want 2", d["archived"])
+	}
+
+	// Summary.Host on ls JSON lets script consumers split local /
+	// remote without a second show call; the codex row must carry
+	// the host, the claude row must not.
+	d = e.mustRun(0, "ls").data(t)
+	sums := d["sessions"].([]any)
+	saw := map[string]string{}
+	for _, raw := range sums {
+		s := raw.(map[string]any)
+		host, _ := s["host"].(string)
+		saw[s["agent"].(string)] = host
+	}
+	if saw["codex"] != "dev@build-server" {
+		t.Errorf("codex Summary.Host = %q, want dev@build-server", saw["codex"])
+	}
+	if saw["claude-code"] != "" {
+		t.Errorf("claude-code Summary.Host = %q, want empty", saw["claude-code"])
+	}
+
+	// --host filter narrows the list to one side of the split.
+	d = e.mustRun(0, "ls", "--host", "local").data(t)
+	for _, raw := range d["sessions"].([]any) {
+		if h, _ := raw.(map[string]any)["host"].(string); h != "" {
+			t.Errorf(`--host local leaked a remote row: host=%q`, h)
+		}
+	}
+	d = e.mustRun(0, "ls", "--host", "dev@build-server").data(t)
+	for _, raw := range d["sessions"].([]any) {
+		if h, _ := raw.(map[string]any)["host"].(string); h != "dev@build-server" {
+			t.Errorf(`--host dev@build-server leaked a non-matching row: host=%q`, h)
+		}
+	}
+
+	// search --host scopes hits, and Hit.Host comes through so the
+	// picker can label remote rows / route Resume through SSH.
+	d = e.mustRun(0, "search", "--host", "dev@build-server", "构建速度").data(t)
+	hits := d["hits"].([]any)
+	if len(hits) == 0 {
+		t.Fatalf("remote-host search returned no hits")
+	}
+	for _, raw := range hits {
+		h := raw.(map[string]any)
+		if h["host"] != "dev@build-server" {
+			t.Errorf(`Hit.Host = %v, want dev@build-server`, h["host"])
+		}
+	}
 }
 
 func TestRemoteSyncSSHFailure(t *testing.T) {

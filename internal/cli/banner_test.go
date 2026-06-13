@@ -63,7 +63,7 @@ func TestAgentColorBrandTable(t *testing.T) {
 		"claude-code", "codex", "cursor",
 		"gemini", "antigravity",
 		"qwen", "iflow", "qoder",
-		"aider", "opencode",
+		"aider", "opencode", "mimocode", "kimi-code",
 		"mystery",
 	} {
 		if got := app.agentColor(agent); got != agent {

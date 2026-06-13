@@ -48,8 +48,9 @@ func TestRenderHitsBasic(t *testing.T) {
 	}
 	out := captureStdout(t, func() { renderHits(app, hits, "备份", 1, false) })
 
-	// the two codex hits share a single header row
-	if strings.Count(out, "codex/019e970a") != 1 {
+	// the two codex hits share a single header row. shortID renders
+	// long sourceIDs as "head6 + … + tail4" so we look for the abbrev.
+	if strings.Count(out, "codex/019e97…aaaa") != 1 {
 		t.Errorf("codex header not deduped:\n%s", out)
 	}
 	// both hits show up with their roles

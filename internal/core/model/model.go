@@ -53,9 +53,16 @@ type ToolCall struct {
 
 // Summary is the lightweight listing view of a session, cheap to load
 // without parsing the full message list.
+//
+// Host is "" for sessions parsed off the local filesystem and carries
+// the SSH destination (e.g. "dev@build-01") for sessions pulled in via
+// `tape sync --remote`. Surfacing it on Summary lets ls/search/picker
+// label remote rows and route their resume through ssh without having
+// to round-trip back into the full Session.
 type Summary struct {
 	ID        string    `json:"id"`
 	Agent     string    `json:"agent"`
+	Host      string    `json:"host,omitempty"`
 	Title     string    `json:"title,omitempty"`
 	CWD       string    `json:"cwd,omitempty"`
 	Project   string    `json:"project"`
@@ -68,6 +75,7 @@ func (s *Session) Summary() Summary {
 	return Summary{
 		ID:        s.ID,
 		Agent:     s.Agent,
+		Host:      s.Meta["host"],
 		Title:     s.Title,
 		CWD:       s.CWD,
 		Project:   ProjectSlug(s.CWD),

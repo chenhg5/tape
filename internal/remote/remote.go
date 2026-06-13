@@ -22,11 +22,29 @@ import (
 )
 
 // AgentDirs are the session directories mirrored from the remote $HOME.
-// Keep in sync with the source packages.
+// Keep in sync with the source packages — each entry is a path
+// relative to the remote user's home, and the local mirror preserves
+// the exact layout so each source's New(<mirrorDir>) still finds the
+// files where it expects them. Aider's whole history is a single
+// flat file rather than a tree, so it's listed verbatim instead of
+// as a directory; tar treats the two cases identically.
+//
+// NOTE: missing directories on the remote are silently skipped (see
+// remoteScript), so listing an agent the user hasn't installed costs
+// nothing — keep this list permissive.
 var AgentDirs = []string{
-	".claude/projects",
-	".codex/sessions",
-	".cursor/chats",
+	".claude/projects",                    // claude-code
+	".codex/sessions",                     // codex
+	".cursor/chats",                       // cursor
+	".opencode",                           // opencode parents of .local/share/opencode
+	".local/share/opencode",               // opencode (XDG layout)
+	".gemini",                             // gemini cli (also catches antigravity-cli/)
+	".qwen",                               // qwen code
+	".iflow",                              // iflow
+	".qoder",                              // qoder
+	".aider.chat.history.md",              // aider (flat file)
+	".local/share/mimocode",               // mimocode (XDG layout)
+	".kimi-code",                          // kimi-code
 }
 
 // Mirror pulls session files from one remote host into Dir.
@@ -93,11 +111,16 @@ func (m *Mirror) Pull(ctx context.Context) error {
 }
 
 // remoteScript builds the shell command executed on the remote host: tar up
-// whichever agent directories exist there. No agent data is not an error.
+// whichever agent paths exist there. Missing paths are silently skipped so
+// the script never errors on a host that hasn't installed a given agent.
+//
+// We use `[ -e ]` (not `[ -d ]`) because some agents — notably aider —
+// keep their entire history in a single file at the home root, not a
+// directory. Tar handles both with the same -cf invocation.
 func remoteScript(newer string) string {
 	var checks []string
 	for _, d := range AgentDirs {
-		checks = append(checks, fmt.Sprintf(`[ -d "%s" ] && dirs="$dirs %s"`, d, d))
+		checks = append(checks, fmt.Sprintf(`[ -e "%s" ] && dirs="$dirs %s"`, d, d))
 	}
 	newerFlag := ""
 	if newer != "" {

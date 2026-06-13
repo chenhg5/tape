@@ -236,6 +236,8 @@ const opencodeSessionID = "ses_opencode_demo"
 const (
 	antigravitySessionID = "11111111-2222-3333-4444-555555555555"
 	qoderSessionID       = "qoder-s-001"
+	mimocodeSessionID    = "ses_mimo_demo"
+	kimiCodeSessionID    = "kc-2026-06-13-001"
 )
 
 func (e *env) seedAntigravity() {
@@ -326,6 +328,101 @@ func (e *env) seedOpenCode() {
 			p.id, p.mid, opencodeSessionID, p.t, p.t, p.data); err != nil {
 			e.t.Fatal(err)
 		}
+	}
+}
+
+// seedMimocode plants a MiMo Code session at the canonical
+// ~/.local/share/mimocode/mimocode.db path. MiMo Code is a fork of
+// sst/opencode (same Drizzle session/message/part schema), so the
+// fixture mirrors seedOpenCode — only the path and agent label change.
+func (e *env) seedMimocode() {
+	e.t.Helper()
+	dir := filepath.Join(e.home, ".local", "share", "mimocode")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "mimocode.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer db.Close()
+
+	for _, q := range []string{
+		`CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT,
+			slug TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL,
+			version TEXT NOT NULL, time_created INTEGER, time_updated INTEGER)`,
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+			time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL)`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL,
+			session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER,
+			data TEXT NOT NULL)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	created := int64(1781256000000)
+	_, _ = db.Exec(`INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?)`,
+		mimocodeSessionID, nil, nil, "mimo-demo", "/root/code/demo",
+		"Try MiMo Code", "0.1.0", created, created+10_000)
+
+	uData := `{"id":"m1","sessionID":"` + mimocodeSessionID + `","role":"user","time":{"created":` + itoa(created+100) + `}}`
+	aData := `{"id":"m2","sessionID":"` + mimocodeSessionID + `","role":"assistant","time":{"created":` + itoa(created+5000) + `},"model":{"providerID":"xiaomi","modelID":"mimo-pro"},"path":{"cwd":"/root/code/demo","root":"/root/code/demo"}}`
+	_, _ = db.Exec(`INSERT INTO message VALUES (?,?,?,?,?)`, "m1", mimocodeSessionID, created+100, created+100, uData)
+	_, _ = db.Exec(`INSERT INTO message VALUES (?,?,?,?,?)`, "m2", mimocodeSessionID, created+5000, created+5000, aData)
+
+	parts := []struct {
+		id, mid string
+		t       int64
+		data    string
+	}{
+		{"p1", "m1", created + 200, `{"type":"text","text":"小米 MiMo Code 怎么用？"}`},
+		{"p2", "m2", created + 4000, `{"type":"text","text":"MEMORY.md 会自动注入；--continue 续接最近会话。"}`},
+	}
+	for _, p := range parts {
+		if _, err := db.Exec(`INSERT INTO part VALUES (?,?,?,?,?,?)`,
+			p.id, p.mid, mimocodeSessionID, p.t, p.t, p.data); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+}
+
+// seedKimiCode plants a kimi-code session under
+// ~/.kimi-code/sessions/<workDirKey>/<sessionId>/agents/main/wire.jsonl —
+// the JSON-RPC 2.0 event log kimi-code persists per session. The
+// fixture exercises both a string user_input and the ToolCall →
+// ToolResult flow so the e2e search/show pass actually hits the
+// parser's main branches.
+func (e *env) seedKimiCode() {
+	e.t.Helper()
+	mainDir := filepath.Join(e.home, ".kimi-code", "sessions", "wd_demo", kimiCodeSessionID, "agents", "main")
+	if err := os.MkdirAll(mainDir, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	state := `{"title":"试试 kimi code","workDir":"/root/code/demo","model":"kimi-k2-preview","createdAt":1781256000000}`
+	if err := os.WriteFile(filepath.Join(e.home, ".kimi-code", "sessions", "wd_demo", kimiCodeSessionID, "state.json"),
+		[]byte(state), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+
+	lines := []string{
+		`{"jsonrpc":"2.0","method":"event","params":{"type":"TurnBegin","payload":{"user_input":"用 kimi code 写一个登录页"}}}`,
+		`{"jsonrpc":"2.0","method":"event","params":{"type":"ContentPart","payload":{"type":"text","text":"好的，我来生成。"}}}`,
+		`{"jsonrpc":"2.0","method":"event","params":{"type":"ToolCall","payload":{"type":"function","id":"tc-1","function":{"name":"Write","arguments":"{\"path\":\"login.tsx\"}"}}}}`,
+		`{"jsonrpc":"2.0","method":"event","params":{"type":"ToolResult","payload":{"tool_call_id":"tc-1","return_value":{"is_error":false,"output":"wrote login.tsx"}}}}`,
+		`{"jsonrpc":"2.0","method":"event","params":{"type":"TurnEnd","payload":{}}}`,
+	}
+	if err := os.WriteFile(filepath.Join(mainDir, "wire.jsonl"), []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+
+	// Also write the session_index.jsonl entry — proves the index
+	// fast path is exercised, not just the directory walk.
+	if err := os.WriteFile(filepath.Join(e.home, ".kimi-code", "session_index.jsonl"),
+		[]byte(`{"sessionId":"`+kimiCodeSessionID+`","sessionDir":"sessions/wd_demo/`+kimiCodeSessionID+`","workDir":"/root/code/demo"}`+"\n"),
+		0o600); err != nil {
+		e.t.Fatal(err)
 	}
 }
 

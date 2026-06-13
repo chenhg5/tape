@@ -74,6 +74,8 @@ func TestInjectMemoryPhaseAAgentsAllResolveToMemoryFile(t *testing.T) {
 		"aider":       "CONVENTIONS.md",
 		"antigravity": "GEMINI.md", // Antigravity inherits gemini-cli's convention
 		"qoder":       "AGENTS.md", // qoder is in the AGENTS.md family
+		"mimocode":    "MEMORY.md", // MiMo Code's project memory convention
+		"kimi-code":   "AGENTS.md", // Kimi Code follows the AGENTS.md hierarchy
 	}
 	for agent, expected := range want {
 		root := t.TempDir()

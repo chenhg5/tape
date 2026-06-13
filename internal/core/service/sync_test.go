@@ -169,6 +169,32 @@ func TestSyncIndexErrorReported(t *testing.T) {
 	}
 }
 
+// TestSyncFullRebuildIgnoresStaleShortCircuit pins the --full contract:
+// when Sync.Full is true, sessions that are already in the archive
+// (Stale = false) must still be re-parsed, re-Put, and re-Upserted.
+// The motivating use case is a parser/IR change that needs to backfill
+// across an existing archive without users having to wipe ~/.tape.
+func TestSyncFullRebuildIgnoresStaleShortCircuit(t *testing.T) {
+	src := &fakeSource{
+		name: "codex", found: true,
+		refs:     []ports.SessionRef{ref("codex", "a"), ref("codex", "b")},
+		sessions: map[string]*model.Session{"a": sess("codex", "a", 1), "b": sess("codex", "b", 1)},
+	}
+	arch := &fakeArchive{known: map[string]bool{"codex/a": true, "codex/b": true}}
+	ix := &fakeIndex{}
+	rep, _ := (&Sync{
+		Sources: []ports.Source{src}, Archive: arch, Index: ix, Full: true,
+	}).Run(context.Background(), time.Time{})
+
+	sr := rep.Sources[0]
+	if sr.Archived != 2 || sr.Skipped != 0 {
+		t.Errorf("--full must re-archive every ref, got %+v", sr)
+	}
+	if len(arch.puts) != 2 || len(ix.upserts) != 2 {
+		t.Errorf("puts=%v upserts=%v (want both = 2)", arch.puts, ix.upserts)
+	}
+}
+
 func TestSyncContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

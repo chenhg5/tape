@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -58,6 +59,12 @@ func renderSessionList(app *App, sums []model.Summary, page, pageSize, total int
 		if s.Project != "" && s.Title != "" {
 			titleCol = app.gray(truncDisp(s.Project, 28)) + "  " + titleCol
 		}
+		// Prefix remote rows with a dim @host tag so the local/remote
+		// split is obvious without a dedicated column (most users have
+		// zero remote rows; a column would be wasted space).
+		if s.Host != "" {
+			titleCol = app.gray("@"+s.Host) + "  " + titleCol
+		}
 		id := padRightDisp(shortID(s.ID), idW)
 		agent := padRightDisp(s.Agent, agentW)
 		fmt.Printf("  %s  %s  %s  %s  %s\n",
@@ -79,7 +86,7 @@ func renderSessionList(app *App, sums []model.Summary, page, pageSize, total int
 }
 
 func newLsCmd(app *App) *cobra.Command {
-	var agent, dir, since string
+	var agent, dir, since, host string
 	var limit, page int
 	var printOnly bool
 	cmd := &cobra.Command{
@@ -96,6 +103,11 @@ the table-equivalent JSON contract.
 --dir <path> restricts the list to sessions whose working directory was
 <path> (or one of its descendants). Use "." for the current directory —
 the most common filter, e.g. "tape ls --dir ." inside a repo.
+
+--host <name> scopes the list by origin machine. Pass "local" to hide
+sessions mirrored in via 'tape sync --remote', or an SSH destination
+(matching what you used in --remote) to see only that host's sessions.
+Remote rows are tagged with a dim @host badge in the output.
 
 Pagination: --limit N --page P returns page P (1-based) of N items each.
 The interactive picker honors --limit (defaults to 30 there) but
@@ -127,11 +139,11 @@ ignores --page; for deep browsing combine --print with --page.`,
 					pickerLimit = 30 // picker can't scroll yet — keep it scrollable-by-eye
 				}
 				return runInteractiveLs(cmd.Context(), app, ports.Filter{
-					Agent: agent, Project: dir, Since: sinceTime, Limit: pickerLimit,
+					Agent: agent, Project: dir, Host: host, Since: sinceTime, Limit: pickerLimit,
 				})
 			}
 			filter := ports.Filter{
-				Agent: agent, Project: dir, Since: sinceTime,
+				Agent: agent, Project: dir, Host: host, Since: sinceTime,
 				Limit: limit, Offset: (page - 1) * limit,
 			}
 			sums, err := app.Archive().List(cmd.Context(), filter)
@@ -165,8 +177,9 @@ ignores --page; for deep browsing combine --print with --page.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent (claude-code, codex, cursor, opencode, gemini, antigravity, qwen, iflow, qoder, aider)")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent (claude-code, codex, cursor, opencode, gemini, antigravity, qwen, iflow, qoder, mimocode, kimi-code, aider)")
 	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
+	cmd.Flags().StringVar(&host, "host", "", `filter by origin host ("local" = this machine, or ssh-host)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")
 	cmd.Flags().IntVar(&page, "page", 1, "page number (1-based)")
@@ -176,15 +189,30 @@ ignores --page; for deep browsing combine --print with --page.`,
 
 // shortID keeps "<agent>/<first-8-of-uuid>" for display; full ids and any
 // unique fragment are accepted everywhere ids are read.
+// shortID renders a session ID compact enough for picker / table
+// columns. It needs to (a) stay under ~22 display columns so the
+// picker line doesn't wrap and (b) preserve enough entropy that
+// two distinct sessions never collapse to the same label.
+//
+// Naive "first 8 of sourceID" works for UUID-style IDs (claude-code,
+// codex, cursor) but fails on opencode-family IDs (`ses_141bXXXffeYYY`)
+// where the first 8 chars are a fixed timestamp prefix and the
+// real entropy is at the tail. We split on the first '/' and, if the
+// sourceID part is longer than 12, keep "head6 + … + tail4" — that
+// captures both the timestamp shard and the random suffix.
 func shortID(id string) string {
-	if len(id) > 8 {
-		for i, r := range id {
-			if r == '/' && len(id) > i+9 {
-				return id[:i+9]
-			}
+	abbrev := func(s string) string {
+		// Operate on rune slice so multi-byte IDs don't slice mid-rune.
+		rs := []rune(s)
+		if len(rs) <= 12 {
+			return s
 		}
+		return string(rs[:6]) + "…" + string(rs[len(rs)-4:])
 	}
-	return id
+	if i := strings.IndexByte(id, '/'); i > 0 && i+1 < len(id) {
+		return id[:i+1] + abbrev(id[i+1:])
+	}
+	return abbrev(id)
 }
 
 func truncate(s string, n int) string {

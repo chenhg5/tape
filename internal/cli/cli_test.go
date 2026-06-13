@@ -37,13 +37,61 @@ func TestParseSince(t *testing.T) {
 
 func TestShortID(t *testing.T) {
 	cases := map[string]string{
-		"codex/019ea0af-3d6a-7393-8ccf-a4ae49f116c3": "codex/019ea0af",
-		"claude-code/7dd2afaf-1234-5678":             "claude-code/7dd2afaf",
-		"short":                                      "short",
+		// UUID-style IDs: head-6 + … + tail-4 keeps both halves.
+		"codex/019ea0af-3d6a-7393-8ccf-a4ae49f116c3": "codex/019ea0…16c3",
+		"claude-code/7dd2afaf-1234-5678":             "claude-code/7dd2af…5678",
+		// opencode-family IDs share a fixed `ses_141bXXX` prefix; the
+		// tail-4 is what actually distinguishes one session from another.
+		// Regression for tape#mimo-short-id: prior shortID truncated to
+		// `mimocode/ses_141b` and made every session look identical.
+		"mimocode/ses_141b69756ffeXmTRdFwDAW8QIU": "mimocode/ses_14…8QIU",
+		"opencode/ses_141dcf748ffeE800iK5eLs7MzE": "opencode/ses_14…7MzE",
+		// Pathologically short IDs and unprefixed IDs are kept verbatim.
+		"short":            "short",
+		"under12char":      "under12char",
+		"longerthantwelve": "longer…elve",
 	}
 	for in, want := range cases {
 		if got := shortID(in); got != want {
 			t.Errorf("shortID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestShortIDDistinguishesSimilarPrefixes pins the actual bug: three
+// distinct mimocode sessions whose IDs share the first 8 chars must
+// produce three distinct short labels.
+func TestShortIDDistinguishesSimilarPrefixes(t *testing.T) {
+	ids := []string{
+		"mimocode/ses_141b69756ffeXmTRdFwDAW8QIU",
+		"mimocode/ses_141b69751ffes63wTfiifT7N3V",
+		"mimocode/ses_141b69725ffeSvkt6QI5HLic13",
+	}
+	seen := map[string]string{}
+	for _, id := range ids {
+		s := shortID(id)
+		if prev, ok := seen[s]; ok {
+			t.Errorf("shortID collision: %q and %q both → %q", prev, id, s)
+		}
+		seen[s] = id
+	}
+}
+
+// TestShellQuote pins the POSIX single-quote escape rule we rely on
+// when building remote ssh commands (a stray quote inside cwd must not
+// break the shell). The escape sequence '\'' is awkward but standard;
+// every POSIX shell handles it.
+func TestShellQuote(t *testing.T) {
+	cases := map[string]string{
+		"":                                          "''",
+		"/root/code/spaceship":                      "'/root/code/spaceship'",
+		"/home/me/with space":                       "'/home/me/with space'",
+		"/tmp/it's/quoted":                          `'/tmp/it'\''s/quoted'`,
+		`/path/with "double" and 'single' quotes`:   `'/path/with "double" and '\''single'\'' quotes'`,
+	}
+	for in, want := range cases {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -69,6 +117,8 @@ func TestStartHint(t *testing.T) {
 		"opencode":    "opencode",
 		"antigravity": "agy",
 		"qoder":       "qodercli",
+		"mimocode":    "mimo",
+		"kimi-code":   "kimi",
 	}
 	for agent, bin := range cases {
 		if hint := startHint(agent, "h.md"); !strings.HasPrefix(hint, bin+" ") || !strings.Contains(hint, "h.md") {

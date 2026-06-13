@@ -28,7 +28,9 @@ import (
 //	1 → initial release
 //	2 → 2026-06-12: include ToolCall.Output + per-session @meta row
 //	3 → 2026-06-12: zero per-message timestamps fall back to s.UpdatedAt
-const indexBuildVersion = 3
+//	4 → 2026-06-13: add sessions.host column so --host scoping works in
+//	    search without round-tripping through the archive
+const indexBuildVersion = 4
 
 const schema = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -37,6 +39,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     title      TEXT,
     project    TEXT,
     cwd        TEXT,
+    host       TEXT,
     started_at INTEGER,
     updated_at INTEGER,
     msg_count  INTEGER
@@ -139,13 +142,14 @@ func (ix *Index) Upsert(ctx context.Context, s *model.Session) error {
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO sessions (id, agent, title, project, cwd, started_at, updated_at, msg_count)
-		 VALUES (?,?,?,?,?,?,?,?)
+		`INSERT INTO sessions (id, agent, title, project, cwd, host, started_at, updated_at, msg_count)
+		 VALUES (?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   title=excluded.title, project=excluded.project, cwd=excluded.cwd,
+		   host=excluded.host,
 		   started_at=excluded.started_at, updated_at=excluded.updated_at,
 		   msg_count=excluded.msg_count`,
-		s.ID, s.Agent, s.Title, model.ProjectSlug(s.CWD), s.CWD,
+		s.ID, s.Agent, s.Title, model.ProjectSlug(s.CWD), s.CWD, s.Meta["host"],
 		s.StartedAt.UnixMilli(), s.UpdatedAt.UnixMilli(), len(s.Messages)); err != nil {
 		return err
 	}
@@ -229,6 +233,19 @@ func (ix *Index) Search(ctx context.Context, q ports.Query) ([]ports.Hit, error)
 		where += ` AND (s.project LIKE ? OR instr(s.cwd, ?) > 0)`
 		args = append(args, model.ProjectSlug(q.Project)+"%", q.Project)
 	}
+	// Host scoping: "" matches every row, "local" matches rows with a
+	// NULL/empty host (sessions parsed locally), anything else is an
+	// exact match. COALESCE so the empty-string and NULL cases align —
+	// indexer leaves host as "" when there's no Meta["host"].
+	switch q.Host {
+	case "":
+		// no-op
+	case "local":
+		where += ` AND COALESCE(s.host, '') = ''`
+	default:
+		where += ` AND s.host = ?`
+		args = append(args, q.Host)
+	}
 	if !q.Since.IsZero() {
 		where += ` AND s.updated_at >= ?`
 		args = append(args, q.Since.UnixMilli())
@@ -239,8 +256,8 @@ func (ix *Index) Search(ctx context.Context, q ports.Query) ([]ports.Hit, error)
 	case "relevance":
 		// Pure BM25 — long conversations that mention the term a lot win.
 		sqlq = `
-SELECT m.session_id, s.agent, s.title, s.project, m.message_id, m.role,
-       m.text, m.ts
+SELECT m.session_id, s.agent, COALESCE(s.host,''), s.title, s.project,
+       m.message_id, m.role, m.text, m.ts
 FROM fts_messages m
 JOIN sessions s ON s.id = m.session_id` + where + `
 ORDER BY rank LIMIT ? OFFSET ?`
@@ -249,9 +266,10 @@ ORDER BY rank LIMIT ? OFFSET ?`
 		// Newest session first, with a per-session cap (window function)
 		// so a chatty old session can't dominate the page.
 		sqlq = `
-SELECT session_id, agent, title, project, message_id, role, text, ts FROM (
-  SELECT m.session_id, s.agent, s.title, s.project, m.message_id, m.role,
-         m.text, m.ts, s.updated_at AS s_updated,
+SELECT session_id, agent, host, title, project, message_id, role, text, ts FROM (
+  SELECT m.session_id, s.agent, COALESCE(s.host,'') AS host, s.title,
+         s.project, m.message_id, m.role, m.text, m.ts,
+         s.updated_at AS s_updated,
          ROW_NUMBER() OVER (PARTITION BY m.session_id ORDER BY m.ts ASC) AS rn
   FROM fts_messages m
   JOIN sessions s ON s.id = m.session_id` + where + `
@@ -272,7 +290,7 @@ LIMIT ? OFFSET ?`
 		var h ports.Hit
 		var text string
 		var ts int64
-		if err := rows.Scan(&h.SessionID, &h.Agent, &h.Title, &h.Project, &h.MessageID, &h.Role, &text, &ts); err != nil {
+		if err := rows.Scan(&h.SessionID, &h.Agent, &h.Host, &h.Title, &h.Project, &h.MessageID, &h.Role, &text, &ts); err != nil {
 			return nil, err
 		}
 		h.Snippet = makeSnippet(text, q.Text)

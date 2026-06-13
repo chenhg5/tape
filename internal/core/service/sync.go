@@ -58,6 +58,13 @@ type Sync struct {
 	Sources []ports.Source
 	Archive ports.Archive
 	Index   ports.Index
+	// Full bypasses the per-session checksum short-circuit and re-parses
+	// every ref, rewriting both archive and index. Use this after a
+	// parser change, a corrupted archive, or when adding a new field to
+	// the IR that older runs missed. The cost is O(all sessions), which
+	// for a typical user means seconds — refs that haven't changed still
+	// produce identical bytes so the underlying file writes are cheap.
+	Full bool
 	// OnSourceStart fires once per source after Detect+List finished, with
 	// the number of refs about to be processed; on every archived session
 	// OnSessionDone fires with the running counter for that source.
@@ -126,7 +133,9 @@ func (s *Sync) syncOne(ctx context.Context, src ports.Source, ref ports.SessionR
 	if err != nil {
 		return err
 	}
-	if !stale {
+	// In --full mode we re-archive regardless of staleness, so the
+	// existing checksum carries forward but the parse happens anyway.
+	if !stale && !s.Full {
 		rep.Skipped++
 		return nil
 	}

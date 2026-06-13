@@ -107,7 +107,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 			if to == "" {
 				return usageErrf("--to <agent> is required. " +
 					"Pick one of: claude-code | codex | cursor | opencode | " +
-					"gemini | antigravity | qwen | iflow | qoder | aider.\n" +
+					"gemini | antigravity | qwen | iflow | qoder | mimocode | kimi-code | aider.\n" +
 					"  e.g. tape restore @last --to codex")
 			}
 			full, err := app.resolveSessionID(cmd.Context(), id)
@@ -307,6 +307,10 @@ func agentLaunchBin(agent string) (string, bool) {
 		return "agy", true
 	case "qoder":
 		return "qodercli", true
+	case "mimocode":
+		return "mimo", true
+	case "kimi-code":
+		return "kimi", true
 	default:
 		return agent, false
 	}

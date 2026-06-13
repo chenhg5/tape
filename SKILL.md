@@ -2,7 +2,7 @@
 name: tape
 description: >-
   Archive, search and restore AI coding sessions (Claude Code, Codex, Cursor,
-  OpenCode, Gemini CLI, Antigravity CLI, Qwen Code, iFlow, Qoder, Aider) with
+  OpenCode, Gemini CLI, Antigravity CLI, Qwen Code, iFlow, Qoder, MiMo Code, Kimi Code, Aider) with
   the tape CLI. Use when the user wants to find a past conversation, continue
   a session in a different agent, back up session history, rescue history
   from an EOL'd agent (iFlow, sunset Gemini CLI), or when context from an
@@ -34,7 +34,17 @@ unchanged sessions):
 ```bash
 tape sync                          # local agents
 tape sync --remote user@host       # also pull from an SSH machine
+tape sync --full                   # re-archive everything (after a parser bump)
+
+tape ls --host local               # hide remote-mirrored sessions
+tape ls --host user@host           # only sessions from that remote
+tape search "auth" --host user@host
 ```
+
+Picker rows from remote hosts are tagged with a dim `@host` badge, and the
+**Resume** action on a remote row execs `ssh <host> -t 'cd <cwd> && <agent>
+--resume <id>'` automatically — you land inside the conversation on the
+right machine without copy-pasting anything.
 
 **Find past context** (CJK queries fully supported):
 
@@ -88,7 +98,7 @@ Strategies, highest fidelity first:
 | Strategy     | What it does                                                                                              | Best for                              |
 |--------------|-----------------------------------------------------------------------------------------------------------|---------------------------------------|
 | `native`     | Rewrites as a real session of the target agent; returns a `resume_command`. claude-code ↔ codex only.     | Same-agent-family resume              |
-| `memory`     | Writes a full transcript and `@`-references it from the target's project memory file (`CLAUDE.md` for claude-code; `AGENTS.md` for codex/cursor/opencode/qoder; `GEMINI.md` for gemini/antigravity; `QWEN.md` / `IFLOW.md` / `CONVENTIONS.md` for the rest) so the agent auto-loads it. | Cross-agent resume that "just works"  |
+| `memory`     | Writes a full transcript and `@`-references it from the target's project memory file (`CLAUDE.md` for claude-code; `AGENTS.md` for codex/cursor/opencode/qoder/kimi-code; `GEMINI.md` for gemini/antigravity; `MEMORY.md` for mimocode; `QWEN.md` / `IFLOW.md` / `CONVENTIONS.md` for the rest) so the agent auto-loads it. | Cross-agent resume that "just works"  |
 | `transcript` | Writes the full verbatim conversation as markdown; user/agent reads on demand.                            | When you don't want to touch memory files |
 | `brief`      | LLM-condensed handoff. `--llm none` falls back to a deterministic template.                               | Token-constrained handoffs            |
 

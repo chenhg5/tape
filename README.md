@@ -15,7 +15,7 @@
 
 ---
 
-You spend hours (and dollars) talking to **Claude Code**, **Codex**, **Cursor**, **OpenCode**, **Gemini CLI** / **Antigravity**, **Qwen Code**, **iFlow** / **Qoder** and **Aider**. Those conversations are project knowledge — decisions made, approaches rejected, the *why* behind every line of code. But they are scattered across vendor-specific formats, locked to one machine, and **impossible to search after the vendor pulls the plug** (looking at you, iFlow).
+You spend hours (and dollars) talking to **Claude Code**, **Codex**, **Cursor**, **OpenCode**, **Gemini CLI** / **Antigravity**, **Qwen Code**, **iFlow** / **Qoder**, **MiMo Code**, **Kimi Code** and **Aider**. Those conversations are project knowledge — decisions made, approaches rejected, the *why* behind every line of code. But they are scattered across vendor-specific formats, locked to one machine, and **impossible to search after the vendor pulls the plug** (looking at you, iFlow).
 
 Tape turns them into **data you own**:
 
@@ -103,13 +103,25 @@ tape sync --remote dev@build-server --remote user@10.0.0.7
 
 Tape mirrors the agent directories over plain `ssh` + `tar` (nothing to install on the remote side, respects your `~/.ssh/config`), then archives them locally. Pulls are incremental after the first one, and remote sessions carry a `host` field so you always know where a conversation happened.
 
+Remote sessions are clearly tagged in `tape ls` / `tape search` with a dim `@host` badge, and you can scope by origin with `--host`:
+
+```bash
+tape ls --host local                  # only this machine
+tape ls --host dev@build-server       # only that one remote
+tape search "auth migration" --host dev@build-server
+```
+
+Picking **Resume** on a remote row execs `ssh <host> -t 'cd <cwd> && <agent> --resume <id>'` for you — one keystroke from the picker to inside the conversation on the right machine.
+
+Run `tape sync --full` after a tape upgrade if you want to backfill new IR fields into already-archived sessions; the run is O(all sessions) but every write is content-addressed so nothing is duplicated.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines) |
-| `tape ls` | Browse archived sessions (interactive picker on a TTY; `--print` for plain table; filters `--agent`, `--dir .`, `--since 7d`) |
-| `tape search <query>` | Full-text search across everything (interactive picker on a TTY; `--print` for plain list) |
+| `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines; `--full` to re-archive everything after a parser bump) |
+| `tape ls` | Browse archived sessions (interactive picker on a TTY; `--print` for plain table; filters `--agent`, `--dir .`, `--host local\|<ssh>`, `--since 7d`) |
+| `tape search <query>` | Full-text search across everything (interactive picker on a TTY; `--print` for plain list; same `--host` filter) |
 | `tape show <id>` | Replay a session (`--full` includes tool output) |
 | `tape overview` | Dashboard: agents, activity sparkline, top projects, recent sessions |
 | `tape restore <id> --to <agent>` | Continue a session in another agent |
@@ -213,6 +225,8 @@ Status legend: **active** = vendor-supported · **succeeded by …** = vendor an
 | Qwen Code | active | `~/.qwen/projects/*/chats/*.jsonl` | memory / brief | `QWEN.md` |
 | iFlow CLI | **EOL** 2026-04-17, succeeded by Qoder | `~/.iflow/{projects,conversations}/...` | memory / brief | `IFLOW.md` |
 | Qoder CLI | active (iFlow CLI successor) | `~/.qoder/projects/*/*.jsonl` | memory / brief | `AGENTS.md` |
+| MiMo Code | active (Xiaomi, OpenCode fork) | `~/.local/share/mimocode/mimocode.db` | memory / brief | `MEMORY.md` |
+| Kimi Code | active (Moonshot AI, supersedes kimi-cli) | `~/.kimi-code/sessions/*/*/agents/main/wire.jsonl` | memory / brief | `AGENTS.md` |
 | Aider | active | `~/.aider.chat.history.md` (+ project-local) | memory / brief | `CONVENTIONS.md` |
 
 Each agent is a small adapter behind one interface ([`ports.Source`](internal/core/ports/ports.go)); adding a new one does not touch the core. Contributions for Cline, RooCode, OpenHands and others are welcome.
@@ -231,7 +245,7 @@ Architecture deep-dive (中文): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Roadmap
 
-- [x] **Archive & search** — claude-code, codex, cursor, opencode, gemini + antigravity, qwen, iflow + qoder, aider; CJK tokenization
+- [x] **Archive & search** — claude-code, codex, cursor, opencode, gemini + antigravity, qwen, iflow + qoder, mimocode, kimi-code, aider; CJK tokenization
 - [x] **Backup** — git and tarball targets, secret scanning and redaction
 - [x] **Restore** — native claude-code ↔ codex, memory injection into the project's `<AGENT>.md` for everything else, plus transcript / brief fallbacks
 - [ ] **Memory** — distill `MEMORY.md` from session history; MCP server so agents can search past sessions mid-task
