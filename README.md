@@ -128,7 +128,13 @@ Run `tape sync --full` after a tape upgrade if you want to backfill new IR field
 | `tape export [output]` | Snapshot the archive to one file or a fan-out of chunks (`--format tar\|zip`, `--compress zstd\|gzip\|xz\|none`, `--split-by none\|size\|agent\|month`, `--jobs N` for parallel writers, positive + reverse filters `--agent`/`--dir`/`--host`/`--exclude-agent`/`--exclude-dir`/`--exclude-host`, `--since`, `--scan-only` for an audit-only run) |
 | `tape version` | Print version, git commit, build date, Go toolchain, platform and detected install method (`--json` for scripts) |
 | `tape update` | Check for and (default) install a newer release. Auto-picks the right installer for how tape was installed (`npm` / `go install` / manual). `--check` reports only; `--channel beta` includes prereleases |
+| `tape history` | Show recent operations (sync / export / restore / update) recorded to `~/.tape/operations.log`. `--limit N`, `--op <verb>`, `--json` |
+| `tape config {get,set,unset,list,path}` | Read or modify persistent CLI defaults in `~/.tape/config.json` (e.g. `defaults.exclude_agents`, `defaults.jobs`, `defaults.format`) |
+| `tape completion {bash,zsh,fish,powershell}` | Emit a shell completion script (pipe into the right place — see the command's help for per-shell instructions) |
+| `tape uninstall` | Remove tape's local state and unschedule any periodic sync (`--keep-archive` to keep sessions, `--dry-run` to preview, `--force` to skip confirmation). Prints the install-method-specific command to remove the binary itself |
 | `tape schema [command]` | Introspect the CLI as JSON (for agents) |
+
+Global flags on every command: `--json` (force machine-readable output; auto-on when stdout is a pipe), `-v` / `--debug` (verbose diagnostics on stderr — source detection paths, scheduler payloads, the GitHub URL `tape update` hits).
 
 Session ids never need to be typed in full — any unique fragment resolves (`tape show 7dd2afaf`), and `@last` refers to the most recent session. Agent names also accept a two-letter shorthand everywhere a `--agent` / `--to` flag appears:
 
@@ -227,6 +233,47 @@ tape update --channel beta --dry-run
 ```
 
 tape never pings GitHub in the background. Update checks happen only when you ask — `tape update --check` or `tape update`. Scripts can lean on the stable JSON envelope: `tape update --check --json | jq -e '.up_to_date'`.
+
+## Operations log + history
+
+Every sync / export / restore / update writes one JSONL line to `~/.tape/operations.log` capturing the scope (flags), counts (archived / skipped / parts), bytes, duration and exit code. `tape history` is the human view; `tape history --json` is the machine view. Set `TAPE_NO_OPLOG=1` to silence the recorder if you'd rather not keep an audit trail.
+
+## Persistent defaults
+
+`tape config` is a tiny CRUD over `~/.tape/config.json`:
+
+```bash
+tape config set defaults.exclude_agents cursor,opencode    # always hide these
+tape config set defaults.jobs 4                            # default --jobs for export
+tape config set defaults.format zip                        # default container
+tape config list                                           # see everything
+tape config unset defaults.jobs                            # revert to CLI default
+tape config path                                           # absolute path of the file
+```
+
+CLI flags still win when explicitly passed. For slice values (`exclude_agents`, `exclude_dirs`, `exclude_hosts`), the configured defaults are *merged* with what you pass on the command line — config is your baseline preference; flags are per-invocation additions.
+
+## Shell completion
+
+```bash
+tape completion bash > /etc/bash_completion.d/tape          # system-wide
+tape completion zsh  > "${fpath[1]}/_tape"                  # per-user zsh
+tape completion fish > ~/.config/fish/completions/tape.fish # per-user fish
+tape completion powershell | Out-String | Invoke-Expression # PowerShell
+```
+
+Re-run after a tape upgrade so new subcommands and flags get picked up.
+
+## Uninstalling
+
+```bash
+tape uninstall --dry-run    # preview every removal step
+tape uninstall              # interactive confirm, then go
+tape uninstall --keep-archive   # only remove the scheduler + oplog
+tape uninstall --force --json   # CI / scripted teardown
+```
+
+`tape uninstall` cleans up everything tape installed under your user account — the scheduler unit, the archive + index, the operations log — and prints the install-method-specific command to remove the binary itself. We deliberately don't `rm /usr/local/bin/tape` for you: bash users notice, agents might not, both deserve consent.
 
 ## Agent & script mode
 

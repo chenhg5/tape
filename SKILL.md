@@ -186,6 +186,43 @@ the right thing: `npm install -g @tapeai/tape@<tag>` for npm,
 Homebrew / manual installs get the suggested command printed but
 nothing is executed.
 
+**Operations log** — `tape history` reads `~/.tape/operations.log`
+(one JSONL line per sync / export / restore / update with scope,
+counts, bytes, duration, exit_code). Useful for "what did the
+agent's last sync archive?" without piecing it together from
+stdout. Disable with `TAPE_NO_OPLOG=1`.
+
+**Persistent defaults** — `tape config` is the place to store
+preferences that would otherwise live in shell aliases:
+
+```bash
+tape config set defaults.exclude_agents cursor,opencode
+tape config set defaults.jobs 4
+tape config list --json
+tape config unset defaults.jobs
+```
+
+CLI flags still win when explicitly passed; for slice values
+(exclude_*) configured defaults are *merged* with command-line
+flags. Agents that need deterministic behavior should pass every
+relevant flag explicitly and not rely on whatever config the human
+left behind.
+
+**Completion** — `tape completion {bash,zsh,fish,powershell}` for
+shell tab-completion (see the command's --help for per-shell install
+locations). Re-run after upgrades.
+
+**Uninstall** — `tape uninstall [--dry-run|--force|--keep-archive]`
+removes the scheduler unit, the archive + index, the operations
+log, and prints the install-method-specific command for the binary
+itself (we never auto-delete `/usr/local/bin/tape`).
+
+**Verbose diagnostics** — `-v` / `--debug` on any command sends
+diagnostic lines (source detect paths, scheduler payloads, GitHub
+URL, chunk plans) to stderr. Useful when "tape sync didn't pick
+up iflow" surfaces — the debug line tells you exactly which path
+was probed and what was returned.
+
 ## Conventions
 
 - Session ids look like `codex/019ea0af-...`; any unique fragment resolves,

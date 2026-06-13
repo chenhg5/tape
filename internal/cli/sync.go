@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,19 @@ import (
 	"github.com/chenhg5/tape/internal/remote"
 	"github.com/chenhg5/tape/internal/schedule"
 )
+
+// countFound rolls up "how many sources actually reported data"
+// for the audit log, since service.SyncReport doesn't expose it
+// directly. Used only by the oplog path.
+func countFound(rep service.SyncReport) int {
+	n := 0
+	for _, s := range rep.Sources {
+		if s.Found {
+			n++
+		}
+	}
+	return n
+}
 
 // renderSyncReport prints one row per *installed* source, then a
 // colored summary line. Layout:
@@ -116,10 +130,22 @@ user, never root.`,
   tape sync --status
   tape sync --uninstall`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			if install || uninstall || status {
 				return runSyncSchedule(cmd, app, install, uninstall, status, interval, remotes)
 			}
+			run := startRun(app, "sync")
+			run.setScope("since", since)
+			if full {
+				run.setScope("full", "true")
+			}
+			if len(remotes) > 0 {
+				run.setScope("remotes", strings.Join(remotes, ","))
+			}
+			// One audit row per invocation, regardless of how the
+			// body returns. err is captured by name so we can adjust
+			// the record's outcome from the defer.
+			defer func() { err = run.finish(err) }()
 			t, err := parseSince(since)
 			if err != nil {
 				return err
@@ -176,6 +202,29 @@ user, never root.`,
 			pb.Done("")
 			if err != nil {
 				return err
+			}
+			run.setCount("archived", report.Archived())
+			run.setCount("skipped", report.Skipped())
+			run.setCount("errors", report.ErrorCount())
+			run.setCount("sources_found", countFound(report))
+			// --debug surfaces what Detect saw per source. Most users
+			// never need this; it pays for itself the one time they
+			// can't figure out why their iflow sessions aren't showing
+			// up ("iflow: missing, looked under …").
+			for _, s := range report.Sources {
+				label := s.Agent
+				if s.Host != "" {
+					label += "@" + s.Host
+				}
+				switch {
+				case len(s.Errors) > 0:
+					app.debugf("%s: errors=%v dir=%s", label, s.Errors, s.DataDir)
+				case !s.Found:
+					app.debugf("%s: not installed (no data dir)", label)
+				default:
+					app.debugf("%s: scanned=%d archived=%d skipped=%d dir=%s",
+						label, s.Scanned, s.Archived, s.Skipped, s.DataDir)
+				}
 			}
 			if app.useJSON() {
 				return emitJSON(map[string]any{

@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/chenhg5/tape/internal/archive/local"
+	"github.com/chenhg5/tape/internal/config"
 	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/index/sqlitefts"
 )
@@ -96,8 +97,44 @@ type App struct {
 
 	home     string
 	jsonOut  bool
+	debug    bool
 	archive  *local.Archive
 	indexImp *sqlitefts.Index
+	defaults *config.Defaults
+}
+
+// Defaults returns the user's persisted preferences from
+// ~/.tape/config.json. We cache after the first read so commands
+// can call it freely without thinking about I/O. A bad file is
+// reported through debugf (so --debug surfaces it) but never
+// fails the invocation; users editing config in vim shouldn't be
+// able to brick `tape ls`.
+func (a *App) Defaults() config.Defaults {
+	if a.defaults != nil {
+		return *a.defaults
+	}
+	c, err := config.Load(a.home)
+	if err != nil {
+		a.debugf("config load failed (ignored): %v", err)
+		c = &config.Config{}
+	}
+	a.defaults = &c.Defaults
+	return c.Defaults
+}
+
+// debugf prints to stderr only when --debug / -v is on. The prefix
+// keeps debug noise visually distinct from real output (which goes
+// to stdout) and from regular stderr warnings. Format mirrors fmt
+// so callers don't have to think about a custom logger interface.
+func (a *App) debugf(format string, args ...any) {
+	if a == nil || !a.debug {
+		return
+	}
+	prefix := "[debug] "
+	if a.useColor() {
+		prefix = a.gray("[debug] ")
+	}
+	fmt.Fprintf(os.Stderr, prefix+format+"\n", args...)
 }
 
 func (a *App) Archive() *local.Archive {
@@ -200,12 +237,15 @@ you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 	})
 	app.home = resolveHome()
 	root.PersistentFlags().BoolVar(&app.jsonOut, "json", false, "machine-readable JSON output")
+	root.PersistentFlags().BoolVarP(&app.debug, "debug", "v", false, "verbose diagnostic logging on stderr (source detection, SQL filters, scheduler payloads)")
 
 	root.AddCommand(
 		newSyncCmd(app), newLsCmd(app), newSearchCmd(app), newShowCmd(app),
 		newOverviewCmd(app), newExportCmd(app), newRestoreCmd(app),
 		newIndexCmd(app), newSchemaCmd(app, root),
 		newVersionCmd(app), newUpdateCmd(app),
+		newCompletionCmd(app), newHistoryCmd(app), newConfigCmd(app),
+		newUninstallCmd(app),
 	)
 
 	err := root.Execute()

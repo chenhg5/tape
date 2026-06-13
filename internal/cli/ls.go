@@ -57,6 +57,47 @@ func resolveAgentFilter(raw string) (string, error) {
 	return "", usageErrf("unknown agent %q%s\n  known: %s", raw, hint, agentid.HelpLine())
 }
 
+// mergeExcludeAgents folds the user's --exclude-agent CLI input
+// with whatever defaults.exclude_agents is set in ~/.tape/config.json.
+// Order: defaults first (so they read first in config list output),
+// then CLI; resolveExcludeAgents de-dupes downstream. Logic is
+// "CLI is additive on top of config" — config is a baseline
+// preference, the flag is a per-invocation increment. This matches
+// the mole / gh convention where personal defaults stay in config
+// and one-off overrides ride the command line.
+func mergeExcludeAgents(app *App, fromCLI []string) []string {
+	defs := app.Defaults().ExcludeAgents
+	if len(defs) == 0 {
+		return fromCLI
+	}
+	out := make([]string, 0, len(defs)+len(fromCLI))
+	out = append(out, defs...)
+	out = append(out, fromCLI...)
+	return out
+}
+
+func mergeExcludeDirs(app *App, fromCLI []string) []string {
+	defs := app.Defaults().ExcludeDirs
+	if len(defs) == 0 {
+		return fromCLI
+	}
+	out := make([]string, 0, len(defs)+len(fromCLI))
+	out = append(out, defs...)
+	out = append(out, fromCLI...)
+	return out
+}
+
+func mergeExcludeHosts(app *App, fromCLI []string) []string {
+	defs := app.Defaults().ExcludeHosts
+	if len(defs) == 0 {
+		return fromCLI
+	}
+	out := make([]string, 0, len(defs)+len(fromCLI))
+	out = append(out, defs...)
+	out = append(out, fromCLI...)
+	return out
+}
+
 // splitCSVAndTrim accepts the StringArray values cobra hands us and
 // flattens both axes — repeated flags (`--exclude-agent cc
 // --exclude-agent oc`) and comma-separated values (`--exclude-agent
@@ -215,12 +256,12 @@ ignores --page; for deep browsing combine --print with --page.`,
 				return err
 			}
 			dir = resolveDirFilter(dir)
-			excludedAgents, err := resolveExcludeAgents(excludeAgent)
+			excludedAgents, err := resolveExcludeAgents(mergeExcludeAgents(app, excludeAgent))
 			if err != nil {
 				return err
 			}
-			excludedDirs := resolveExcludeDirs(excludeDir)
-			excludedHosts := splitCSVAndTrim(excludeHost)
+			excludedDirs := resolveExcludeDirs(mergeExcludeDirs(app, excludeDir))
+			excludedHosts := splitCSVAndTrim(mergeExcludeHosts(app, excludeHost))
 			// Interactive path: TTY, no --json, no --print, no
 			// explicit pagination. The picker uses a single page of
 			// `limit` items (defaults to 30 — see below); pagination is

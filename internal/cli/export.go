@@ -88,12 +88,29 @@ resulting files exactly where it left them.`,
   tape export --dir . --format zip --compress none  # current project as a .zip
   tape export --scan-only --agent claude-code       # audit secrets`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			run := startRun(app, "export")
+			defer func() { err = run.finish(err) }()
 			if len(args) == 1 {
 				if output != "" {
 					return usageErrf("specify the output either positionally or with --output, not both")
 				}
 				output = args[0]
+			}
+			// Pull configured defaults if the user didn't pass an
+			// explicit value. cobra's `Changed` is the only honest
+			// "did the user say so?" — relying on the string being
+			// empty would punish people who legitimately want to set
+			// it to "" via `tape config unset`.
+			defaults := app.Defaults()
+			if !cmd.Flag("format").Changed && defaults.Format != "" {
+				format = defaults.Format
+			}
+			if !cmd.Flag("compress").Changed && defaults.Compress != "" {
+				compress = defaults.Compress
+			}
+			if !cmd.Flag("jobs").Changed && defaults.Jobs > 0 {
+				jobs = defaults.Jobs
 			}
 			if format == "" {
 				format = snapshot.FormatTar
@@ -112,7 +129,7 @@ resulting files exactly where it left them.`,
 			if err != nil {
 				return err
 			}
-			excludedAgents, err := resolveExcludeAgents(excludeAgent)
+			excludedAgents, err := resolveExcludeAgents(mergeExcludeAgents(app, excludeAgent))
 			if err != nil {
 				return err
 			}
@@ -120,11 +137,20 @@ resulting files exactly where it left them.`,
 				Agent: agentCanon, Project: resolveDirFilter(dir),
 				Host: host, Since: sinceTime,
 				ExcludeAgents:   excludedAgents,
-				ExcludeProjects: resolveExcludeDirs(excludeDir),
-				ExcludeHosts:    splitCSVAndTrim(excludeHost),
+				ExcludeProjects: resolveExcludeDirs(mergeExcludeDirs(app, excludeDir)),
+				ExcludeHosts:    splitCSVAndTrim(mergeExcludeHosts(app, excludeHost)),
 			}
-
+			run.setScope("agent", agentCanon)
+			run.setScope("dir", dir)
+			run.setScope("host", host)
+			if len(excludedAgents) > 0 {
+				run.setScope("exclude_agents", strings.Join(excludedAgents, ","))
+			}
+			run.setScope("split_by", splitBy)
+			run.setScope("format", format)
+			run.setScope("compress", compress)
 			if scanOnly {
+				run.setScope("mode", "scan-only")
 				return runExportScan(cmd, app, filter)
 			}
 
@@ -156,9 +182,9 @@ resulting files exactly where it left them.`,
 				// `--jobs 1` works as "serial encoding" for
 				// reproducible bench runs.
 				opts.EncoderConcurrency = jobsToEncoderConcurrency(jobs, 1)
-				return runExportSingle(cmd, app, opts, output)
+				return runExportSingle(cmd, app, opts, output, run)
 			}
-			return runExportChunked(cmd, app, opts, output, split, jobs)
+			return runExportChunked(cmd, app, opts, output, split, jobs, run)
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path or chunk prefix (default: tape-export-<timestamp>.<ext>)")
@@ -209,7 +235,11 @@ func jobsToEncoderConcurrency(jobs, parallelChunks int) int {
 // runExportSingle is the pre-chunking happy path: one Write call,
 // one artifact, one result line. Kept as its own function so the
 // chunked path doesn't have to special-case a 1-element loop.
-func runExportSingle(cmd *cobra.Command, app *App, opts ports.ExportOpts, output string) error {
+//
+// run is the oplog accumulator: we stash file count + byte total
+// in it so `tape history` can summarize "what did this export
+// actually emit?" without re-walking the artifact.
+func runExportSingle(cmd *cobra.Command, app *App, opts ports.ExportOpts, output string, run *recordedRun) error {
 	pb := app.newProgress("export", 0)
 	opts.Output = output
 	opts.OnProgress = func(done, total int64, path string) {
@@ -222,6 +252,11 @@ func runExportSingle(cmd *cobra.Command, app *App, opts ports.ExportOpts, output
 	pb.Done("")
 	if err != nil {
 		return err
+	}
+	if run != nil {
+		run.setCount("files", res.Changed)
+		run.setCount("parts", 1)
+		run.setBytes(res.Bytes)
 	}
 	if err := printExportResult(app, res); err != nil {
 		return err
@@ -313,7 +348,7 @@ func parseSize(s string) (int64, error) {
 // share an output directory, and a serial loop gives a predictable
 // progress bar and easy ctrl-C semantics. If users ever need
 // throughput we can revisit.
-func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefix string, split splitSpec, jobs int) error {
+func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefix string, split splitSpec, jobs int, run *recordedRun) error {
 	sums, err := app.Archive().List(cmd.Context(), opts.Filter)
 	if err != nil {
 		return err
@@ -332,6 +367,11 @@ func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefi
 	chunks := planChunks(sums, split, sizeOf)
 	if len(chunks) == 0 {
 		return ErrNoResults
+	}
+	if app.debug {
+		for _, ch := range chunks {
+			app.debugf("chunk %s: %d session(s)", ch.suffix, len(ch.ids))
+		}
 	}
 
 	// Worker count = min(--jobs, number of chunks). When --jobs is 0
@@ -414,6 +454,18 @@ func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefi
 		return err
 	}
 
+	var totalBytes int64
+	var totalFiles int
+	for _, r := range results {
+		totalBytes += r.Bytes
+		totalFiles += r.Files
+	}
+	if run != nil {
+		run.setCount("parts", len(results))
+		run.setCount("files", totalFiles)
+		run.setCount("workers", parallel)
+		run.setBytes(totalBytes)
+	}
 	if app.useJSON() {
 		if err := emitJSON(map[string]any{
 			"split": map[string]any{
@@ -425,10 +477,6 @@ func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefi
 			return err
 		}
 	} else {
-		var totalBytes int64
-		for _, r := range results {
-			totalBytes += r.Bytes
-		}
 		if len(results) > 1 {
 			fmt.Fprintf(os.Stderr, "  %s %d chunk(s), %s total · %d worker(s)\n",
 				app.gray("Σ"), len(results), humanSize(totalBytes), parallel)

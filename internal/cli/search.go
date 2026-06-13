@@ -218,12 +218,12 @@ the most useful match is usually "the conversation I just had". Switch to
 				return usageErrf("--sort must be 'recent' or 'relevance'")
 			}
 			dir = resolveDirFilter(dir)
-			excludedAgents, err := resolveExcludeAgents(excludeAgent)
+			excludedAgents, err := resolveExcludeAgents(mergeExcludeAgents(app, excludeAgent))
 			if err != nil {
 				return err
 			}
-			excludedDirs := resolveExcludeDirs(excludeDir)
-			excludedHosts := splitCSVAndTrim(excludeHost)
+			excludedDirs := resolveExcludeDirs(mergeExcludeDirs(app, excludeDir))
+			excludedHosts := splitCSVAndTrim(mergeExcludeHosts(app, excludeHost))
 			// over-fetch by one to detect "has more" without a separate count
 			// query (FTS COUNT(*) over the same MATCH would be expensive).
 			hits, err := ix.Search(cmd.Context(), ports.Query{

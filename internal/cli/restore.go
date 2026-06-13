@@ -64,7 +64,9 @@ Default strategy is native when the target supports it, memory otherwise.`,
 			}
 			return nil
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			run := startRun(app, "restore")
+			defer func() { err = run.finish(err) }()
 			var id string
 			// Interactive path: no id and no --to, on a TTY. Build both
 			// inputs from a menu rather than parroting cobra-style errors
@@ -157,6 +159,11 @@ Default strategy is native when the target supports it, memory otherwise.`,
 			if strategy == "native" && !canNative {
 				return usageErrf("agent %q does not support native restore; try --strategy memory or transcript", to)
 			}
+
+			run.setScope("id", id)
+			run.setScope("to", to)
+			run.setScope("strategy", strategy)
+			run.setCount("messages", len(sess.Messages))
 
 			if dryRun {
 				plan := map[string]any{

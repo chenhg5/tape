@@ -89,7 +89,13 @@ command for scripts.`,
   tape update --channel beta  # include prereleases
   tape update --dry-run`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			run := startRun(app, "update")
+			run.setScope("channel", channel)
+			if checkOnly {
+				run.setScope("mode", "check")
+			}
+			defer func() { err = run.finish(err) }()
 			if channel == "" {
 				channel = "latest"
 			}
@@ -98,6 +104,7 @@ command for scripts.`,
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), httpTimeout)
 			defer cancel()
+			app.debugf("GET %s (channel=%s, timeout=%s)", releaseEndpoint, channel, httpTimeout)
 			rel, err := fetchLatestRelease(ctx, channel)
 			if err != nil {
 				return cliError{
