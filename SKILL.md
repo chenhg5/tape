@@ -178,6 +178,7 @@ tape version                       # version, commit, build date, install method
 tape update --check                # any newer release? exit non-zero if so
 tape update                        # upgrade in place via the matching installer
 tape update --channel beta --dry-run
+tape update --mirror gitee         # pin a release mirror (or TAPE_MIRROR=gitee)
 ```
 
 `tape update` reads the install method from `tape version` and runs
@@ -185,6 +186,15 @@ the right thing: `npm install -g @tapeai/tape@<tag>` for npm,
 `go install github.com/chenhg5/tape/cmd/tape@<tag>` for `go install`.
 Homebrew / manual installs get the suggested command printed but
 nothing is executed.
+
+**Release mirrors** — every release lands on both
+`github.com/chenhg5/tape` and `gitee.com/cg33/tape`. The CLI races a
+HEAD probe at update time and uses whichever responds first, so
+mainland-China users get the Gitee path automatically. Agents that
+need deterministic behavior should pin with `TAPE_MIRROR=github` or
+`TAPE_MIRROR=gitee`; the `tape update --json` payload reports
+`mirror` so audit logs and bug reports can include it without an
+extra round-trip.
 
 **Operations log** — `tape history` reads `~/.tape/operations.log`
 (one JSONL line per sync / export / restore / update with scope,

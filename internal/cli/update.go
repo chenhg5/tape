@@ -2,11 +2,7 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -14,35 +10,20 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/chenhg5/tape/internal/mirror"
 )
 
-// releaseEndpoint is the GitHub API URL we ask for the latest
-// release. Going through the API (instead of scraping the HTML
-// /releases/latest redirect) gives us the body+publish date for
-// free, lets us request a specific channel later, and is rate-
-// limited to 60 unauthenticated calls/hour per IP — plenty when
-// the only caller is `tape update --check`.
-const releaseEndpoint = "https://api.github.com/repos/chenhg5/tape/releases"
-
-// httpTimeout is short on purpose: this is a foreground command,
-// the user is waiting at the prompt. If GitHub is slow we'd
-// rather fail and print a manual link than hang.
-const httpTimeout = 5 * time.Second
-
-// release is the slice of the GitHub release JSON we actually use.
-// Other fields are ignored so a new GH schema bump doesn't break
-// parsing.
-type release struct {
-	TagName     string    `json:"tag_name"`
-	Name        string    `json:"name"`
-	HTMLURL     string    `json:"html_url"`
-	Prerelease  bool      `json:"prerelease"`
-	PublishedAt time.Time `json:"published_at"`
-}
+// httpTimeout caps the whole update check (probe race + fetch).
+// Short on purpose: this is a foreground command, the user is
+// waiting at the prompt.
+const httpTimeout = 8 * time.Second
 
 // updateResult is the JSON contract for `tape update --check
 // --json`. UpToDate is the most important field — scripts can
-// `jq -e '.up_to_date | not'` and trigger a reinstall.
+// `jq -e '.up_to_date | not'` and trigger a reinstall. Mirror is
+// the host we actually fetched from ("github" / "gitee"), useful
+// for CN users to verify the probe picked the fast path.
 type updateResult struct {
 	Current    string `json:"current"`
 	Latest     string `json:"latest"`
@@ -50,6 +31,7 @@ type updateResult struct {
 	UpToDate   bool   `json:"up_to_date"`
 	ReleaseURL string `json:"release_url,omitempty"`
 	Published  string `json:"published,omitempty"`
+	Mirror     string `json:"mirror,omitempty"`
 	// Install + Command echo what `tape update` (no --check) would
 	// run, so agents can preview the side effect before it happens.
 	Install string `json:"install,omitempty"`
@@ -62,31 +44,39 @@ type updateResult struct {
 // without executing.
 func newUpdateCmd(app *App) *cobra.Command {
 	var (
-		channel  string
+		channel   string
 		checkOnly bool
 		dryRun    bool
+		mirrorPin string
 	)
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Check for and install a newer tape release",
-		Long: `Asks GitHub's Releases API for the latest tag (--channel beta
-includes prereleases), compares against the running version, and
-— unless --check is set — runs the right installer for how you
-got tape:
+		Long: `Asks the configured release mirror for the latest tag
+(--channel beta includes prereleases), compares against the running
+version, and — unless --check is set — runs the right installer
+for how you got tape:
 
   npm install        →  npm install -g @tapeai/tape@<tag>
   go install         →  go install github.com/chenhg5/tape/cmd/tape@<tag>
   homebrew / manual  →  prints the right command and exits non-zero
 
-Update checks are explicit. tape never pings GitHub in the
+Update checks are explicit. tape never pings GitHub or Gitee in the
 background — privacy is the default, you ask when you want to know.
+
+Mirror selection: by default, tape races a tiny HEAD request against
+each known mirror (GitHub and Gitee) and uses whichever responds
+first — handy for users in regions where one of them is slow. Pin
+a mirror with --mirror github|gitee, or set TAPE_MIRROR=<name> in
+your environment. --debug surfaces every probe's latency.
 
 --dry-run prints the command but doesn't execute (useful in CI).
 --json emits a stable schema with current/latest/up_to_date/
-command for scripts.`,
+command/mirror for scripts.`,
 		Example: `  tape update --check
   tape update                 # actually upgrade
   tape update --channel beta  # include prereleases
+  tape update --mirror gitee  # force the Gitee mirror
   tape update --dry-run`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -94,6 +84,9 @@ command for scripts.`,
 			run.setScope("channel", channel)
 			if checkOnly {
 				run.setScope("mode", "check")
+			}
+			if mirrorPin != "" {
+				run.setScope("mirror_pin", mirrorPin)
 			}
 			defer func() { err = run.finish(err) }()
 			if channel == "" {
@@ -104,12 +97,48 @@ command for scripts.`,
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), httpTimeout)
 			defer cancel()
-			app.debugf("GET %s (channel=%s, timeout=%s)", releaseEndpoint, channel, httpTimeout)
-			rel, err := fetchLatestRelease(ctx, channel)
+
+			// --mirror overrides TAPE_MIRROR which overrides probe.
+			// We construct a tiny env override in-process by
+			// looking up the pinned host directly, bypassing Pick.
+			var host mirror.Host
+			var report mirror.PickReport
+			switch {
+			case mirrorPin != "":
+				h, ok := mirror.Lookup(mirrorPin)
+				if !ok {
+					return usageErrf("unknown mirror %q (known: github, gitee)", mirrorPin)
+				}
+				host = h
+				app.debugf("mirror pinned via --mirror: %s", host.DisplayName)
+			default:
+				report, err = mirror.PickWithReport(ctx)
+				if err != nil {
+					return cliError{
+						Type: "update_failed", Message: err.Error(),
+						Suggestion: "set TAPE_MIRROR=github or TAPE_MIRROR=gitee to skip the probe",
+					}
+				}
+				host = report.Chosen
+				for _, r := range report.Results {
+					switch {
+					case r.Err() != nil:
+						app.debugf("probe %s: error: %v", r.Host().Name, r.Err())
+					default:
+						app.debugf("probe %s: %s", r.Host().Name, r.Latency().Round(time.Millisecond))
+					}
+				}
+				app.debugf("mirror chosen: %s (reason=%s)", host.DisplayName, report.Reason)
+			}
+			run.setScope("mirror", host.Name)
+
+			app.debugf("GET %s (channel=%s, timeout=%s)", host.APILatest(), channel, httpTimeout)
+			rel, err := host.FetchLatest(ctx, channel)
 			if err != nil {
 				return cliError{
 					Type: "update_failed", Message: err.Error(),
-					Suggestion: "check network or browse " + releaseEndpoint,
+					Suggestion: fmt.Sprintf("check network or browse %s; or pin a mirror with --mirror github|gitee",
+						host.APILatest()),
 				}
 			}
 
@@ -126,6 +155,7 @@ command for scripts.`,
 				Channel:    channel,
 				UpToDate:   upToDate,
 				ReleaseURL: rel.HTMLURL,
+				Mirror:     host.Name,
 				Install:    install,
 				Command:    command,
 			}
@@ -170,6 +200,7 @@ command for scripts.`,
 	cmd.Flags().StringVar(&channel, "channel", "latest", "release channel: latest (stable) or beta (include prereleases)")
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "report without upgrading; exit 4 if a newer release exists")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the upgrade command without running it")
+	cmd.Flags().StringVar(&mirrorPin, "mirror", "", "force a release mirror (github, gitee). Defaults to fastest-responding probe; TAPE_MIRROR env has the same effect")
 	return cmd
 }
 
@@ -190,54 +221,6 @@ func normalizeTag(s string) string {
 		s = s[:i]
 	}
 	return s
-}
-
-// fetchLatestRelease asks GitHub for either /releases/latest
-// (channel=latest, which always returns the most recent non-
-// prerelease) or /releases (channel=beta, where we walk the
-// list and pick the first hit including prereleases).
-func fetchLatestRelease(ctx context.Context, channel string) (*release, error) {
-	url := releaseEndpoint + "/latest"
-	if channel == "beta" {
-		// Take the most recent release including prereleases. GH
-		// returns them newest first, so the first element is the
-		// answer.
-		url = releaseEndpoint + "?per_page=5"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	// GitHub strongly recommends a UA + the versioned Accept header.
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "tape-cli")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MiB is plenty
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, errors.New("no releases published yet")
-	}
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("github returned %d", resp.StatusCode)
-	}
-	if channel == "beta" {
-		var list []release
-		if err := json.Unmarshal(body, &list); err != nil {
-			return nil, err
-		}
-		if len(list) == 0 {
-			return nil, errors.New("no releases on this channel")
-		}
-		return &list[0], nil
-	}
-	var one release
-	if err := json.Unmarshal(body, &one); err != nil {
-		return nil, err
-	}
-	return &one, nil
 }
 
 // upgradeCommand returns the literal shell command to upgrade by
@@ -298,6 +281,9 @@ func printUpdateHuman(app *App, r updateResult) {
 	fmt.Printf("  %s latest   %s", app.gray("·"), app.cyan(r.Latest))
 	if r.Published != "" {
 		fmt.Printf("  %s", app.gray("("+r.Published+")"))
+	}
+	if r.Mirror != "" {
+		fmt.Printf("  %s", app.gray("via "+r.Mirror))
 	}
 	fmt.Println()
 	if r.UpToDate {

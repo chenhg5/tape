@@ -232,7 +232,19 @@ tape update               # upgrade in place using the matching installer
 tape update --channel beta --dry-run
 ```
 
-tape never pings GitHub in the background. Update checks happen only when you ask — `tape update --check` or `tape update`. Scripts can lean on the stable JSON envelope: `tape update --check --json | jq -e '.up_to_date'`.
+tape never pings GitHub or Gitee in the background. Update checks happen only when you ask — `tape update --check` or `tape update`. Scripts can lean on the stable JSON envelope: `tape update --check --json | jq -e '.up_to_date'`.
+
+### Release mirrors (GitHub + Gitee)
+
+Every release lands on both [GitHub](https://github.com/chenhg5/tape) and [Gitee](https://gitee.com/cg33/tape). Tape picks the faster one for you at install + update time by sending a tiny HEAD probe to each and racing — typically the right answer in under 1.5s — so mainland-China users get the Gitee path automatically without configuring anything.
+
+```bash
+tape update -v               # see the per-mirror probe latency in the debug output
+tape update --mirror gitee   # pin a specific mirror for one command
+TAPE_MIRROR=gitee tape update  # or pin via env for the whole shell
+```
+
+The same probe is built into `scripts/install.sh` (curl-pipe-bash one-liner). See `docs/RELEASE.md` for the release-time double-push playbook (every binary + sha256 sidecar must land on both mirrors before users notice).
 
 ## Operations log + history
 
