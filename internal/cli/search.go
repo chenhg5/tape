@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chenhg5/tape/internal/agentid"
 	"github.com/chenhg5/tape/internal/core/ports"
 )
 
@@ -196,6 +197,10 @@ the most useful match is usually "the conversation I just had". Switch to
 			if err != nil {
 				return err
 			}
+			agentCanon, err := resolveAgentFilter(agent)
+			if err != nil {
+				return err
+			}
 			ix, err := app.Index()
 			if err != nil {
 				return err
@@ -216,7 +221,7 @@ the most useful match is usually "the conversation I just had". Switch to
 			// query (FTS COUNT(*) over the same MATCH would be expensive).
 			hits, err := ix.Search(cmd.Context(), ports.Query{
 				Text:    strings.Join(args, " "),
-				Agent:   agent,
+				Agent:   agentCanon,
 				Project: dir,
 				Host:    host,
 				Since:   t,
@@ -260,7 +265,7 @@ the most useful match is usually "the conversation I just had". Switch to
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent — full name or 2-letter shorthand ("+agentid.HelpLine()+")")
 	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
 	cmd.Flags().StringVar(&host, "host", "", `filter by origin host ("local" or ssh-host)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")

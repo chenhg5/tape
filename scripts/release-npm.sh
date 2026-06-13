@@ -4,21 +4,25 @@
 # Usage:
 #   scripts/release-npm.sh <version> [latest|beta]
 #
-#   scripts/release-npm.sh 0.2.0              # stable:  npm i -g agent-tape
-#   scripts/release-npm.sh 0.3.0-beta.1 beta  # beta:    npm i -g agent-tape@beta
+#   scripts/release-npm.sh 0.2.0              # stable:  npm i -g @tapeai/tape
+#   scripts/release-npm.sh 0.3.0-beta.1 beta  # beta:    npm i -g @tapeai/tape@beta
 #
 # Environment:
-#   NPM_PACKAGE   package name (default: agent-tape). Platform packages
-#                 become <name>-linux-x64 etc. Scoped names work too:
-#                 NPM_PACKAGE=@you/tape -> @you/tape-linux-x64
+#   NPM_PACKAGE   package name (default: @tapeai/tape). Platform packages
+#                 become <name>-linux-x64 etc. Scoped names like the
+#                 default produce @tapeai/tape-linux-x64; unscoped names
+#                 produce e.g. tape-cli-linux-x64.
 #   NPM_DRY_RUN   set to 1 to run `npm publish --dry-run` (nothing uploaded)
 #
-# Requires: go, npm (logged in: `npm login`), run from the repo root.
+# Requires: go, npm (logged in: `npm login`, with publish rights on the
+# @tapeai org for the default name), run from the repo root. Scoped
+# packages always need --access public on first publish; the script
+# passes it unconditionally so re-publishing is safe.
 set -euo pipefail
 
 VERSION=${1:?usage: release-npm.sh <version> [latest|beta]}
 TAG=${2:-latest}
-PKG=${NPM_PACKAGE:-agent-tape}
+PKG=${NPM_PACKAGE:-@tapeai/tape}
 OUT=dist/npm
 DRY_FLAG=()
 [ "${NPM_DRY_RUN:-}" = "1" ] && DRY_FLAG=(--dry-run)
@@ -85,3 +89,5 @@ if [ "$TAG" = "beta" ]; then
 else
   echo "  npm install -g $PKG"
 fi
+echo "or pin a specific version:"
+echo "  npm install -g $PKG@$VERSION"

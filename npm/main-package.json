@@ -1,7 +1,7 @@
 {
   "name": "__PACKAGE__",
   "version": "__VERSION__",
-  "description": "Record, search and replay your AI coding sessions (Claude Code, Codex, Cursor). Nothing gets lost on tape.",
+  "description": "Record, search and replay your AI coding sessions across 12 agents (Claude Code, Codex, Cursor, OpenCode, Gemini, Antigravity, Qwen, Qoder, iFlow, Aider, MiMo Code, Kimi Code). Nothing gets lost on tape.",
   "keywords": [
     "ai",
     "agent",

@@ -66,8 +66,8 @@ Resume it with:
 With npm (prebuilt binaries, no Go required):
 
 ```bash
-npm install -g agent-tape          # stable
-npm install -g agent-tape@beta     # beta channel
+npm install -g @tapeai/tape        # stable
+npm install -g @tapeai/tape@beta   # beta channel
 ```
 
 With Go 1.26+:
@@ -128,7 +128,16 @@ Run `tape sync --full` after a tape upgrade if you want to backfill new IR field
 | `tape export [output]` | Snapshot the archive to one file (`--format tar\|zip`, `--compress zstd\|gzip\|xz\|none`, filters: `--agent`, `--dir`, `--host`, `--since`, `--scan-only` for an audit-only run) |
 | `tape schema [command]` | Introspect the CLI as JSON (for agents) |
 
-Session ids never need to be typed in full — any unique fragment resolves (`tape show 7dd2afaf`), and `@last` refers to the most recent session.
+Session ids never need to be typed in full — any unique fragment resolves (`tape show 7dd2afaf`), and `@last` refers to the most recent session. Agent names also accept a two-letter shorthand everywhere a `--agent` / `--to` flag appears:
+
+| agent | short | | agent | short | | agent | short |
+|---|---|---|---|---|---|---|---|
+| claude-code | `cc` | | opencode | `oc` | | qwen | `qw` |
+| codex | `cx` | | gemini | `gm` | | qoder | `qd` |
+| cursor | `cu` | | antigravity | `ag` | | iflow | `if` |
+| mimocode | `mi` | | kimi-code | `kc` | | aider | `ad` |
+
+So `tape restore @last --to cc` and `tape export --agent cx --since 7d` do exactly what you'd hope. Case and separators don't matter (`Claude_Code`, `claude code` and `ClaudeCode` all resolve). Typos get a "did you mean" hint.
 
 ## Searching
 

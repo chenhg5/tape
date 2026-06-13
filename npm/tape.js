@@ -6,7 +6,7 @@
 
 const { spawnSync } = require("child_process");
 
-const PACKAGE_NAME = "agent-tape";
+const PACKAGE_NAME = "@tapeai/tape";
 
 const PLATFORMS = {
   "linux-x64": `${PACKAGE_NAME}-linux-x64`,

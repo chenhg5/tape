@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chenhg5/tape/internal/agentid"
 	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
 )
@@ -32,6 +33,28 @@ func resolveDirFilter(raw string) string {
 		return abs
 	}
 	return raw
+}
+
+// resolveAgentFilter normalizes whatever the user typed for --agent
+// / --to (`cc`, `Claude`, `claude_code`, …) into the canonical
+// Source.Name() string. An empty input passes through unchanged so
+// callers can keep using "" to mean "no agent filter".
+//
+// On an unknown name we don't silently treat it as a no-op (that
+// would mask typos and quietly return everything); we surface a
+// usage error with the closest matches the suggester finds. The
+// short codes are listed in the help line so users discover them
+// without having to read the source.
+func resolveAgentFilter(raw string) (string, error) {
+	canon, ok := agentid.Normalize(raw)
+	if ok {
+		return canon, nil
+	}
+	hint := ""
+	if guesses := agentid.Suggest(raw, 3); len(guesses) > 0 {
+		hint = " — did you mean " + strings.Join(guesses, ", ") + "?"
+	}
+	return "", usageErrf("unknown agent %q%s\n  known: %s", raw, hint, agentid.HelpLine())
 }
 
 // renderSessionList prints sessions in a tight, colored table with
@@ -128,6 +151,10 @@ ignores --page; for deep browsing combine --print with --page.`,
 			if err != nil {
 				return err
 			}
+			agentCanon, err := resolveAgentFilter(agent)
+			if err != nil {
+				return err
+			}
 			dir = resolveDirFilter(dir)
 			// Interactive path: TTY, no --json, no --print, no
 			// explicit pagination. The picker uses a single page of
@@ -139,11 +166,11 @@ ignores --page; for deep browsing combine --print with --page.`,
 					pickerLimit = 30 // picker can't scroll yet — keep it scrollable-by-eye
 				}
 				return runInteractiveLs(cmd.Context(), app, ports.Filter{
-					Agent: agent, Project: dir, Host: host, Since: sinceTime, Limit: pickerLimit,
+					Agent: agentCanon, Project: dir, Host: host, Since: sinceTime, Limit: pickerLimit,
 				})
 			}
 			filter := ports.Filter{
-				Agent: agent, Project: dir, Host: host, Since: sinceTime,
+				Agent: agentCanon, Project: dir, Host: host, Since: sinceTime,
 				Limit: limit, Offset: (page - 1) * limit,
 			}
 			sums, err := app.Archive().List(cmd.Context(), filter)
@@ -177,7 +204,7 @@ ignores --page; for deep browsing combine --print with --page.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent (claude-code, codex, cursor, opencode, gemini, antigravity, qwen, iflow, qoder, mimocode, kimi-code, aider)")
+	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent — full name or 2-letter shorthand ("+agentid.HelpLine()+")")
 	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
 	cmd.Flags().StringVar(&host, "host", "", `filter by origin host ("local" = this machine, or ssh-host)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")

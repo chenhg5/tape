@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/chenhg5/tape/internal/agentid"
 	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/export/snapshot"
 	"github.com/chenhg5/tape/internal/redact"
@@ -76,8 +77,12 @@ resulting files exactly where it left them.`,
 			if err != nil {
 				return err
 			}
+			agentCanon, err := resolveAgentFilter(agent)
+			if err != nil {
+				return err
+			}
 			filter := ports.Filter{
-				Agent: agent, Project: resolveDirFilter(dir),
+				Agent: agentCanon, Project: resolveDirFilter(dir),
 				Host: host, Since: sinceTime,
 			}
 
@@ -124,7 +129,7 @@ resulting files exactly where it left them.`,
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path (default: tape-export-<timestamp>.<ext>)")
 	cmd.Flags().StringVar(&format, "format", "", "container format: tar (default) or zip")
 	cmd.Flags().StringVar(&compress, "compress", "", "codec: zstd (default for tar), gzip, xz, none")
-	cmd.Flags().StringVar(&agent, "agent", "", "only export sessions from this agent")
+	cmd.Flags().StringVar(&agent, "agent", "", "only export sessions from this agent — full name or 2-letter shorthand ("+agentid.HelpLine()+")")
 	cmd.Flags().StringVar(&dir, "dir", "", "only export sessions under this working dir ('.' = cwd)")
 	cmd.Flags().StringVar(&host, "host", "", `only export from this origin host ("local" or ssh-host)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")

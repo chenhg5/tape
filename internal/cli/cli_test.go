@@ -160,6 +160,39 @@ func TestSchemaDescribe(t *testing.T) {
 	}
 }
 
+// TestResolveAgentFilter exercises the wrapper that every command
+// using --agent / --to funnels through. Canonical/shortcode/alias
+// each resolve, the empty string passes through (= no filter), and
+// an unknown name surfaces a usage error with "did you mean…".
+func TestResolveAgentFilter(t *testing.T) {
+	cases := map[string]string{
+		"":            "",
+		"claude-code": "claude-code",
+		"cc":          "claude-code",
+		"Claude":      "claude-code",
+		"oc":          "opencode",
+		"OpenCode":    "opencode",
+		"kimi":        "kimi-code",
+	}
+	for in, want := range cases {
+		got, err := resolveAgentFilter(in)
+		if err != nil {
+			t.Errorf("resolveAgentFilter(%q) err: %v", in, err)
+		}
+		if got != want {
+			t.Errorf("resolveAgentFilter(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	_, err := resolveAgentFilter("clauude")
+	if err == nil {
+		t.Fatal("expected error for typo")
+	}
+	if !strings.Contains(err.Error(), "did you mean") || !strings.Contains(err.Error(), "claude-code") {
+		t.Errorf("typo error missing suggestion: %v", err)
+	}
+}
+
 // TestRedactArtifactKeepLengthForDB pins the per-extension policy
 // the export writer uses: .db files get masked in place (so the
 // SQLite header / page boundaries stay valid), everything else gets

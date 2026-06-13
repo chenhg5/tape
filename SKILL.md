@@ -130,6 +130,14 @@ gate, and it always runs on real exports).
 
 - Session ids look like `codex/019ea0af-...`; any unique fragment resolves,
   `@last` means the most recent session.
+- `--agent` / `--to` accept full names, the obvious aliases
+  (`claude`/`kimi`/`mimo`), and a 2-letter shorthand:
+  `cc` claude-code, `cx` codex, `cu` cursor, `oc` opencode, `gm` gemini,
+  `ag` antigravity, `qw` qwen, `qd` qoder, `if` iflow, `ad` aider,
+  `mi` mimocode, `kc` kimi-code. Case and separators are ignored
+  (`Claude_Code` works); unknown names produce a usage error with a
+  "did you mean…" hint. Agents should still pass the canonical
+  spelling — the shorthand exists for humans typing in a terminal.
 - `--dry-run` first for anything that writes (restore, export).
 - All timestamps are RFC 3339; `--since` accepts `24h`, `7d`, `2026-01-31`.
 - The archive lives in `$TAPE_HOME` (default `~/.tape`; legacy `$TAPE_DIR`

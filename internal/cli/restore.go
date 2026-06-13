@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/chenhg5/tape/internal/agentid"
 	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/llm"
 	"github.com/chenhg5/tape/internal/restore"
@@ -105,10 +107,20 @@ Default strategy is native when the target supports it, memory otherwise.`,
 				id = args[0]
 			}
 			if to == "" {
-				return usageErrf("--to <agent> is required. " +
-					"Pick one of: claude-code | codex | cursor | opencode | " +
-					"gemini | antigravity | qwen | iflow | qoder | mimocode | kimi-code | aider.\n" +
-					"  e.g. tape restore @last --to codex")
+				return usageErrf("--to <agent> is required.\n  known: %s\n  e.g. tape restore @last --to codex (or --to cx)",
+					agentid.HelpLine())
+			}
+			// Accept any canonical-name spelling, shorthand, or
+			// alias the user types; everything downstream wants the
+			// canonical Source.Name() string.
+			if canon, ok := agentid.Normalize(to); ok && canon != "" {
+				to = canon
+			} else {
+				hint := ""
+				if guesses := agentid.Suggest(to, 3); len(guesses) > 0 {
+					hint = " — did you mean " + strings.Join(guesses, ", ") + "?"
+				}
+				return usageErrf("unknown target agent %q%s\n  known: %s", to, hint, agentid.HelpLine())
 			}
 			full, err := app.resolveSessionID(cmd.Context(), id)
 			if err != nil {
@@ -129,7 +141,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 				}
 			}
 			if target == nil {
-				return usageErrf("unknown target agent %q (run `tape ls --json` to see registered agents)", to)
+				return usageErrf("target agent %q is not registered on this build (run `tape ls --json` to see what's available)", to)
 			}
 			writer, canNative := target.(ports.SessionWriter)
 			if strategy == "auto" {
@@ -270,7 +282,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 			}
 		},
 	}
-	cmd.Flags().StringVar(&to, "to", "", "target agent (required outside interactive mode); use `tape ls --json` to see archived agents")
+	cmd.Flags().StringVar(&to, "to", "", "target agent — full name or 2-letter shorthand ("+agentid.HelpLine()+")")
 	cmd.Flags().StringVar(&strategy, "strategy", "auto", "restore strategy: auto|native|memory|transcript|brief")
 	cmd.Flags().StringVar(&output, "output", ".tape-handoff.md", "handoff file path (memory/transcript/brief)")
 	cmd.Flags().StringVar(&llmName, "llm", "auto", "summarizer for brief: auto|claude|codex|cursor|none")

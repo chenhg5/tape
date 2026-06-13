@@ -140,7 +140,9 @@ func TestExportFormatMatrix(t *testing.T) {
 
 // --agent / --since narrow the export to the matching sessions. We
 // pick an agent that has data and one that doesn't, and verify the
-// artifact carries only the requested side.
+// artifact carries only the requested side. We also accept the
+// two-letter shorthand so the alias plumbing in resolveAgentFilter
+// is exercised end-to-end through the real binary.
 func TestExportFilters(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
@@ -149,23 +151,32 @@ func TestExportFilters(t *testing.T) {
 	e.seedAllAgents()
 	e.mustRun(0, "sync")
 
-	out := filepath.Join(t.TempDir(), "codex.tar.zst")
-	d := e.mustRun(0, "export", "-o", out, "--agent", "codex").data(t)
-	res := d["result"].(map[string]any)
-	// At least one file (session.json + meta.json + raw/* per session),
-	// but strictly fewer than a full export of the seeded archive.
-	if res["changed_files"].(float64) < 1 {
-		t.Fatalf("--agent codex changed_files = %v", res["changed_files"])
+	for _, agentInput := range []string{"codex", "cx", "Codex"} {
+		t.Run("agent="+agentInput, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "codex.tar.zst")
+			d := e.mustRun(0, "export", "-o", out, "--agent", agentInput).data(t)
+			res := d["result"].(map[string]any)
+			if res["changed_files"].(float64) < 1 {
+				t.Fatalf("--agent %s changed_files = %v", agentInput, res["changed_files"])
+			}
+			if err := walkTarZst(out, func(name string) error {
+				if !strings.HasPrefix(name, "codex/") {
+					return fmt.Errorf("non-codex member leaked into --agent %s export: %s", agentInput, name)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 
-	// every member's path starts with codex/
-	if err := walkTarZst(out, func(name string) error {
-		if !strings.HasPrefix(name, "codex/") {
-			return fmt.Errorf("non-codex member leaked into --agent codex export: %s", name)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	// unknown agent: usage error with "did you mean…"
+	r := e.run("export", "--agent", "cluade")
+	if r.code != 2 {
+		t.Errorf("unknown --agent: exit %d, want 2", r.code)
+	}
+	if !strings.Contains(r.stderr, "did you mean") || !strings.Contains(r.stderr, "claude-code") {
+		t.Errorf("typo error missing suggestion: %s", r.stderr)
 	}
 }
 
