@@ -27,11 +27,17 @@ git tag -s v$VERSION -m "tape v$VERSION"
 git push origin   v$VERSION    # github (canonical)
 git push gitee    v$VERSION    # gitee mirror
 
-# 3) build cross-platform binary archives + sha256 sidecars
+# 3) build cross-platform binaries — both shapes:
+#       raw binaries:    tape-{linux,darwin,windows}-{amd64,arm64}[.exe]
+#         (install.sh's preferred path: one curl → chmod → mv;
+#          no tar/unzip dep; Docker COPY-friendly)
+#       bundled archives: tape_${VERSION}_{linux,darwin,windows}_{amd64,arm64}.{tar.gz,zip}
+#         (binary + LICENSE + README; brew tap & manual downloaders)
 scripts/release-binaries.sh $VERSION
-#    → dist/release/tape_${VERSION}_{linux,darwin,windows}_{amd64,arm64}.{tar.gz,zip}
-#    → dist/release/*.sha256  (sidecars)
-#    → dist/release/SHA256SUMS (aggregate)
+#    → dist/release/tape-<os>-<arch>[.exe]                              (raw, 13-14M)
+#    → dist/release/tape_${VERSION}_<os>_<arch>.{tar.gz,zip}            (bundled, ~6M)
+#    → dist/release/*.sha256                                            (sidecars for both)
+#    → dist/release/SHA256SUMS                                          (aggregate over everything)
 
 # 4) GitHub release with the English notes from CHANGELOG.md
 #    (heredoc keeps a single source of truth — the changelog —
@@ -100,15 +106,18 @@ a global default.
 | Source code at the tagged commit | both | `git push origin && git push gitee` |
 | Release notes (English) | GitHub | inline `gh release create --notes` (sourced from CHANGELOG.md) |
 | Release notes (Chinese) | Gitee | inline heredoc / paste into Gitee web UI |
-| Per-platform binaries (`tape_<ver>_<os>_<arch>.{tar.gz,zip}`) | both | `scripts/release-binaries.sh` |
-| Matching `.sha256` sidecars | both | `scripts/release-binaries.sh` |
+| Raw binaries (`tape-<os>-<arch>[.exe]`) | both | `scripts/release-binaries.sh` |
+| Bundled archives (`tape_<ver>_<os>_<arch>.{tar.gz,zip}`) | both | `scripts/release-binaries.sh` |
+| Matching `.sha256` sidecars (for *both* shapes) | both | `scripts/release-binaries.sh` |
 | Aggregate `SHA256SUMS` file | both (convenience) | `scripts/release-binaries.sh` |
 
 The asset *names* must match byte-for-byte. `install.sh` derives
 the URL from the running OS+arch and the resolved tag; if Gitee's
-asset is called `tape-0.2.0-linux-amd64.tar.gz` instead of
-`tape_0.2.0_linux_amd64.tar.gz`, the install fails for CN users.
-Keep the convention.
+raw asset is called `tape_linux_amd64` instead of
+`tape-linux-amd64`, the install falls back to the bundled archive
+silently (still works, but a roundtrip slower for CN users on cold
+download). Keep both naming conventions in lockstep with
+`scripts/install.sh`.
 
 ### Uploading to Gitee
 
@@ -229,7 +238,11 @@ fetch** (`tape update --check` hitting the API for a tag list).
 ## Verifying after release
 
 ```bash
-# Did the binary land on both mirrors with matching sha256?
+# Did both shapes land on both mirrors with matching sha256?
+# (raw binary — install.sh's preferred path)
+diff <(curl -fsSL https://github.com/chenhg5/tape/releases/download/v0.2.0/tape-linux-amd64.sha256) \
+     <(curl -fsSL https://gitee.com/cg33/tape/releases/download/v0.2.0/tape-linux-amd64.sha256)
+# (bundled archive — fallback + brew tap path)
 diff <(curl -fsSL https://github.com/chenhg5/tape/releases/download/v0.2.0/tape_0.2.0_linux_amd64.tar.gz.sha256) \
      <(curl -fsSL https://gitee.com/cg33/tape/releases/download/v0.2.0/tape_0.2.0_linux_amd64.tar.gz.sha256)
 

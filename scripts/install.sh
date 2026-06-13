@@ -133,6 +133,11 @@ info "version $tag"
 prefix=""
 if [ -n "$PREFIX_PREF" ]; then
     prefix="$PREFIX_PREF"
+    # If the user supplied an explicit prefix, honor it and create
+    # it if missing — TAPE_PREFIX is typically used for scripted
+    # installs that target ~/bin or /opt/tape/bin where the dir
+    # may not pre-exist.
+    mkdir -p "$prefix"
 elif [ -w "/usr/local/bin" ]; then
     prefix="/usr/local/bin"
 elif command -v sudo >/dev/null 2>&1 && [ "$NO_SUDO" != "1" ]; then
@@ -144,42 +149,65 @@ else
 fi
 info "install prefix $prefix"
 
-# Step 5: download the tarball and the matching .sha256 sidecar.
-# tar.gz on all platforms (Windows release ships a .zip; we add a
-# branch when needed but the default convention follows Go releases).
-# Both mirrors expose /releases/download/<tag>/<asset> with identical
-# layouts, so the only difference is the host portion.
-ext="tar.gz"
-if [ "$os_id" = "windows" ]; then ext="zip"; fi
-asset="tape_${tag#v}_${os_id}_${arch_id}.${ext}"
-url="$release_base/download/$tag/$asset"
-sha_url="$url.sha256"
-
+# Step 5: download the binary. We prefer the raw binary asset
+# (tape-<os>-<arch>[.exe]) — one curl, no tar/unzip dependency,
+# and Windows users don't need an extracting tool. We fall back to
+# the bundled tarball (tape_<ver>_<os>_<arch>.tar.gz) only when
+# the raw asset isn't on the release — typically because the user
+# pinned an older version published before release-binaries.sh
+# grew the dual output. Both mirrors expose
+# /releases/download/<tag>/<asset> with identical layouts, so the
+# only difference is the host portion.
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-info "downloading $asset"
-curl -fsSL -o "$tmp/$asset" "$url" \
-    || fail "download failed: $url"
 
-# Sha256 is best-effort: not every release publishes a sidecar yet,
-# but when it does we MUST verify or refuse.
-if curl -fsSL -o "$tmp/$asset.sha256" "$sha_url" 2>/dev/null; then
-    info "verifying sha256"
-    (cd "$tmp" && shasum -a 256 -c "$asset.sha256" >/dev/null 2>&1) \
-        || fail "checksum mismatch — refusing to install"
+raw_name="tape-${os_id}-${arch_id}"
+[ "$os_id" = "windows" ] && raw_name="${raw_name}.exe"
+raw_url="$release_base/download/$tag/$raw_name"
+raw_sha_url="$raw_url.sha256"
+
+bin_src=""
+
+info "trying raw binary $raw_name"
+if curl -fsSL -o "$tmp/$raw_name" "$raw_url" 2>/dev/null; then
+    if curl -fsSL -o "$tmp/$raw_name.sha256" "$raw_sha_url" 2>/dev/null; then
+        info "verifying sha256"
+        (cd "$tmp" && shasum -a 256 -c "$raw_name.sha256" >/dev/null 2>&1) \
+            || fail "checksum mismatch — refusing to install"
+    else
+        warn "no published sha256 sidecar for $raw_name; skipping checksum"
+    fi
+    bin_src="$tmp/$raw_name"
 else
-    warn "no published sha256 sidecar for $tag; skipping checksum"
+    info "raw binary not on this release; falling back to bundled archive"
+    ext="tar.gz"
+    if [ "$os_id" = "windows" ]; then ext="zip"; fi
+    asset="tape_${tag#v}_${os_id}_${arch_id}.${ext}"
+    url="$release_base/download/$tag/$asset"
+    sha_url="$url.sha256"
+    info "downloading $asset"
+    curl -fsSL -o "$tmp/$asset" "$url" \
+        || fail "download failed: $url"
+    if curl -fsSL -o "$tmp/$asset.sha256" "$sha_url" 2>/dev/null; then
+        info "verifying sha256"
+        (cd "$tmp" && shasum -a 256 -c "$asset.sha256" >/dev/null 2>&1) \
+            || fail "checksum mismatch — refusing to install"
+    else
+        warn "no published sha256 sidecar for $tag; skipping checksum"
+    fi
+    info "extracting"
+    case "$ext" in
+        tar.gz) (cd "$tmp" && tar -xzf "$asset") ;;
+        zip)    (cd "$tmp" && unzip -q "$asset") ;;
+    esac
+    # Archives expand to tape_<ver>_<os>_<arch>/<bin>. Walk the
+    # extracted tree (the directory name carries the version, which
+    # the script never re-derives) to find the binary.
+    extracted_bin="tape"; [ "$os_id" = "windows" ] && extracted_bin="tape.exe"
+    bin_src="$(find "$tmp" -name "$extracted_bin" -type f | head -1)"
 fi
 
-# Step 6: extract and move into place.
-info "extracting"
-case "$ext" in
-    tar.gz) (cd "$tmp" && tar -xzf "$asset") ;;
-    zip)    (cd "$tmp" && unzip -q "$asset") ;;
-esac
-bin_src="$tmp/tape"
-[ "$os_id" = "windows" ] && bin_src="$tmp/tape.exe"
-[ -f "$bin_src" ] || fail "binary not found inside $asset"
+[ -n "$bin_src" ] && [ -f "$bin_src" ] || fail "binary not found"
 
 target="$prefix/$(basename "$bin_src")"
 if [ "${USE_SUDO:-0}" = "1" ]; then

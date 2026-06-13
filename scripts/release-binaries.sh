@@ -10,19 +10,30 @@
 #   scripts/release-binaries.sh 0.2.0-beta.1
 #
 # Output: dist/release/
-#   tape_<ver>_linux_amd64.tar.gz          # binary + LICENSE + README
-#   tape_<ver>_linux_amd64.tar.gz.sha256   # sha256 sidecar (line: "<sum>  <name>")
-#   tape_<ver>_linux_arm64.tar.gz(+.sha256)
-#   tape_<ver>_darwin_amd64.tar.gz(+.sha256)
-#   tape_<ver>_darwin_arm64.tar.gz(+.sha256)
-#   tape_<ver>_windows_amd64.zip(+.sha256)
-#   SHA256SUMS                              # one-line-per-file aggregate
+#   # raw, ready-to-exec binaries (install.sh default; Docker COPY-friendly;
+#   # Windows doesn't need unzip):
+#   tape-linux-amd64          tape-linux-amd64.sha256
+#   tape-linux-arm64          tape-linux-arm64.sha256
+#   tape-darwin-amd64         tape-darwin-amd64.sha256
+#   tape-darwin-arm64         tape-darwin-arm64.sha256
+#   tape-windows-amd64.exe    tape-windows-amd64.exe.sha256
 #
-# These files are what install.sh fetches:
-#     asset="tape_${tag#v}_${os_id}_${arch_id}.${ext}"
-#     url="${release_base}/download/${tag}/${asset}"
-# So the file *names* are the contract — don't rename without
-# updating install.sh in lockstep or every CN user gets a 404.
+#   # bundled tarballs (binary + LICENSE + README; for brew tap, manual
+#   # download, anyone who prefers a single archive):
+#   tape_<ver>_linux_amd64.tar.gz          tape_<ver>_linux_amd64.tar.gz.sha256
+#   tape_<ver>_linux_arm64.tar.gz          tape_<ver>_linux_arm64.tar.gz.sha256
+#   tape_<ver>_darwin_amd64.tar.gz         tape_<ver>_darwin_amd64.tar.gz.sha256
+#   tape_<ver>_darwin_arm64.tar.gz         tape_<ver>_darwin_arm64.tar.gz.sha256
+#   tape_<ver>_windows_amd64.zip           tape_<ver>_windows_amd64.zip.sha256
+#
+#   SHA256SUMS                # one-line-per-file aggregate over everything
+#
+# install.sh prefers the raw binary (one curl, no tar/unzip dep) and
+# falls back to the tarball when the raw asset isn't on the release
+# (e.g. older v0.x.y published before this script grew the dual
+# output). Both naming schemes are part of the public contract —
+# don't rename without updating install.sh in lockstep or every CN
+# user gets a 404.
 #
 # Why this is a separate script from release-npm.sh:
 #   * npm publishes 6 packages (1 main + 5 platform), no zipping
@@ -74,9 +85,15 @@ echo "==> building tape v$VERSION for 5 platforms"
 for entry in "${PLATFORMS[@]}"; do
     read -r goos goarch ext <<<"$entry"
     name="tape_${VERSION}_${goos}_${goarch}"
-    asset="${name}.${ext}"
+    archive="${name}.${ext}"
     stage="$OUT/_stage/$name"
     bin="tape"; [ "$goos" = "windows" ] && bin="tape.exe"
+
+    # Raw binary asset: cosign/sops/age-style "curl + chmod +x +
+    # mv" target. Naming follows the GoReleaser default that most
+    # users have muscle memory for: <name>-<os>-<arch>[.exe].
+    raw="tape-${goos}-${goarch}"
+    [ "$goos" = "windows" ] && raw="${raw}.exe"
 
     mkdir -p "$stage"
     # -trimpath strips local FS paths from the binary (reproducibility).
@@ -88,35 +105,30 @@ for entry in "${PLATFORMS[@]}"; do
         go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
         -o "$stage/$bin" ./cmd/tape
 
-    # Ship the legal + the help text alongside the binary. README
-    # also lets users `tar -tf` to see the asset's intent without
-    # extracting it.
+    # 1) Drop the raw binary at the OUT root with its publish-time
+    # name. Single file, no archive — install.sh prefers this
+    # because curl -> chmod -> mv is one less subprocess (no tar
+    # / unzip) and Windows users don't need an extracting tool.
+    cp "$stage/$bin" "$OUT/$raw"
+    chmod +x "$OUT/$raw"
+    (cd "$OUT" && sha256 "$raw" > "${raw}.sha256")
+    ok "$raw ($(du -h "$OUT/$raw" | cut -f1))"
+
+    # 2) Bundle LICENSE + README + binary into the user-facing
+    # archive. For tar.gz/zip we cd to _stage so the archive's
+    # top-level entry is `<name>/` — both Windows Explorer and
+    # `unzip` do the right thing then.
     cp LICENSE "$stage/" 2>/dev/null || true
     cp README.md "$stage/" 2>/dev/null || true
-
-    # Pack into the user-facing archive. For tar.gz we cd to OUT
-    # so the archive's top-level entry is `<name>/`. For zip we
-    # do the same; both Windows Explorer and `unzip` do the right
-    # thing then.
     (
         cd "$OUT/_stage"
         case "$ext" in
-            tar.gz) tar -czf "../${asset}" "$name" ;;
-            zip)    zip -q -r "../${asset}" "$name" ;;
+            tar.gz) tar -czf "../${archive}" "$name" ;;
+            zip)    zip -q -r "../${archive}" "$name" ;;
         esac
     )
-
-    # Sidecar checksum, suffix matches the asset so install.sh's
-    # `${url}.sha256` lookup works. The "<sum>  <name>" format is
-    # what `sha256sum -c` expects, which is the verification path
-    # install.sh runs.
-    (
-        cd "$OUT"
-        sha256 "$asset" > "${asset}.sha256"
-    )
-
-    size="$(du -h "$OUT/$asset" | cut -f1)"
-    ok "$asset ($size)"
+    (cd "$OUT" && sha256 "$archive" > "${archive}.sha256")
+    ok "$archive ($(du -h "$OUT/$archive" | cut -f1))"
 done
 rm -rf "$OUT/_stage"
 
