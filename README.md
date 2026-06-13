@@ -119,13 +119,15 @@ Run `tape sync --full` after a tape upgrade if you want to backfill new IR field
 
 | Command | What it does |
 |---|---|
-| `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines; `--full` to re-archive everything after a parser bump) |
+| `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines; `--full` to re-archive everything after a parser bump; `--install [--interval 1h]` to register a periodic sync job) |
 | `tape ls` | Browse archived sessions (interactive picker on a TTY; `--print` for plain table; filters `--agent`, `--dir .`, `--host local\|<ssh>`, `--since 7d`) |
 | `tape search <query>` | Full-text search across everything (interactive picker on a TTY; `--print` for plain list; same `--host` filter) |
 | `tape show <id>` | Replay a session (`--full` includes tool output) |
 | `tape overview` | Dashboard: agents, activity sparkline, top projects, recent sessions |
 | `tape restore <id> --to <agent>` | Continue a session in another agent |
-| `tape export [output]` | Snapshot the archive to one file (`--format tar\|zip`, `--compress zstd\|gzip\|xz\|none`, filters: `--agent`, `--dir`, `--host`, `--since`, `--scan-only` for an audit-only run) |
+| `tape export [output]` | Snapshot the archive to one file or a fan-out of chunks (`--format tar\|zip`, `--compress zstd\|gzip\|xz\|none`, `--split-by none\|size\|agent\|month`, filters: `--agent`, `--dir`, `--host`, `--since`, `--scan-only` for an audit-only run) |
+| `tape version` | Print version, git commit, build date, Go toolchain, platform and detected install method (`--json` for scripts) |
+| `tape update` | Check for and (default) install a newer release. Auto-picks the right installer for how tape was installed (`npm` / `go install` / manual). `--check` reports only; `--channel beta` includes prereleases |
 | `tape schema [command]` | Introspect the CLI as JSON (for agents) |
 
 Session ids never need to be typed in full — any unique fragment resolves (`tape show 7dd2afaf`), and `@last` refers to the most recent session. Agent names also accept a two-letter shorthand everywhere a `--agent` / `--to` flag appears:
@@ -176,16 +178,48 @@ tape export                                          # everything → tape-expor
 tape export snapshot.tar.gz --compress gzip          # explicit name + codec
 tape export --agent codex --since 7d                 # just codex, last week
 tape export --dir . --format zip --compress none     # current project as a .zip
+tape export --split-by agent                         # one file per agent
+tape export --split-by month --since 1y              # monthly chunks for the year
+tape export --split-by size --split-size 200M        # 200 MiB buckets, sessions never split
 tape export --scan-only --agent claude-code          # audit secrets without writing
 ```
 
-`tape export` is a single, single-purpose command: it walks the archive (optionally filtered with the same flags ls/search use) and writes one file. Pick the container with `--format tar|zip` and the codec with `--compress zstd|gzip|xz|none`; defaults are `tar` + `zstd`, the smallest and fastest combo. Output goes to `tape-export-<UTC-timestamp>.<ext>` in the current directory when you don't pass `-o`.
+`tape export` walks the archive (optionally filtered with the same flags ls/search use) and writes one file — or a set of chunks. Pick the container with `--format tar|zip` and the codec with `--compress zstd|gzip|xz|none`; defaults are `tar` + `zstd`, the smallest and fastest combo. Output goes to `tape-export-<UTC-timestamp>.<ext>` in the current directory when you don't pass `-o`.
+
+For very large archives use `--split-by` to fan out into multiple files instead of one giant one — `agent` (one file per agent), `month` (calendar months of session updated-at), or `size` (greedy buckets honoring `--split-size`, default 256 MiB; sessions are never split across chunks). The chunk suffix is inserted before the extension: `tape-export-<ts>.codex.tar.zst`, `tape-export-<ts>.part-001.tar.zst`, etc.
 
 What happens to the file is your choice — tape doesn't ship a "push to S3/git/Drive" command. Any tar / zip is trivially extractable with system tools and uploadable with whatever tool you already use; we'd rather get out of the way than reinvent rclone.
 
 Real API keys end up in coding sessions more often than you think. By default `tape export` redacts secrets in stream (AWS, GitHub, OpenAI, Anthropic, Slack, JWT, private keys, …) with `[REDACTED:<rule>]` for text and length-preserving masks for binaries; local files are never modified. Pass `--no-redact` to opt out, or `--scan-only` to list what would be redacted without writing anything.
 
 Sync is incremental too — a session is rehashed (and re-archived) only when its source files change size or mtime; the blake3 checksum stays the source of truth when stamps disagree. Sync also keeps the search index in sync with the archive: if you delete `~/.tape/index` or upgrade tape's tokenizer, the next `tape sync` quietly rebuilds it for you. No `index rebuild` command to remember.
+
+## Keeping the archive fresh
+
+`tape sync` is idempotent and cheap, but you still have to remember to run it. Pick one:
+
+- **Manual** — run it before `ls` / `search` when freshness matters. Simplest, zero moving parts.
+- **Shell hook** — drop `tape sync >/dev/null 2>&1 &` into your `.zshrc` / `.bashrc`; one fire-and-forget on every new shell.
+- **Scheduled** — `tape sync --install [--interval 1h]` registers a user-scoped job that runs sync on a cadence:
+  - **Linux:** a `systemd --user` timer at `~/.config/systemd/user/tape-sync.timer`
+  - **macOS:** a LaunchAgent at `~/Library/LaunchAgents/com.tapeai.sync.plist`
+  - **Windows:** prints the `schtasks /Create` one-liner for you to run (we don't auto-execute it).
+  - `tape sync --status` reports whether one is installed; `tape sync --uninstall` removes it.
+
+The job always runs as your user — never root. Add `--remote user@host` to `tape sync --install` to schedule a remote-aware sync; the flag is preserved in the unit file.
+
+## Staying up to date
+
+`tape version` reports the running build's version, commit, build date, Go toolchain, target platform, and the install method it detected (`npm`, `go-install`, `homebrew` or `manual`). The detector drives `tape update`:
+
+```bash
+tape version              # who am I, where do I live, how was I installed
+tape update --check       # any newer release? (network call, exits non-zero if so)
+tape update               # upgrade in place using the matching installer
+tape update --channel beta --dry-run
+```
+
+tape never pings GitHub in the background. Update checks happen only when you ask — `tape update --check` or `tape update`. Scripts can lean on the stable JSON envelope: `tape update --check --json | jq -e '.up_to_date'`.
 
 ## Agent & script mode
 

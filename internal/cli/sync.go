@@ -3,11 +3,14 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/chenhg5/tape/internal/core/service"
 	"github.com/chenhg5/tape/internal/remote"
+	"github.com/chenhg5/tape/internal/schedule"
 )
 
 // renderSyncReport prints one row per *installed* source, then a
@@ -81,6 +84,8 @@ func newSyncCmd(app *App) *cobra.Command {
 	var since string
 	var remotes []string
 	var full bool
+	var install, uninstall, status bool
+	var interval time.Duration
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Archive new or changed sessions from all agents",
@@ -95,13 +100,26 @@ rewritten in place; nothing is deleted.
 With --remote, session files are first mirrored from SSH-reachable machines
 (plain ssh + tar; nothing to install remotely) and archived alongside local
 ones. Remote sessions carry a "host" meta field, are tagged @host in
-ls / search output, and resume over SSH automatically.`,
+ls / search output, and resume over SSH automatically.
+
+Scheduling: 'tape sync --install [--interval 1h]' wires a user-scoped
+timer to run sync on a fixed cadence — systemd user timer on Linux,
+LaunchAgent on macOS, or a schtasks one-liner on Windows (printed for
+you to run). 'tape sync --uninstall' removes it; 'tape sync --status'
+reports whether one is currently registered. The job runs as your
+user, never root.`,
 		Example: `  tape sync
   tape sync --since 7d
   tape sync --full
-  tape sync --remote dev@build-server --remote user@10.0.0.7`,
+  tape sync --remote dev@build-server --remote user@10.0.0.7
+  tape sync --install --interval 30m
+  tape sync --status
+  tape sync --uninstall`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if install || uninstall || status {
+				return runSyncSchedule(cmd, app, install, uninstall, status, interval, remotes)
+			}
 			t, err := parseSince(since)
 			if err != nil {
 				return err
@@ -174,5 +192,90 @@ ls / search output, and resume over SSH automatically.`,
 	cmd.Flags().StringVar(&since, "since", "", "only scan sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().StringArrayVar(&remotes, "remote", nil, "also sync agent sessions from an SSH host (repeatable)")
 	cmd.Flags().BoolVar(&full, "full", false, "re-archive every session, ignoring checksum staleness")
+	cmd.Flags().BoolVar(&install, "install", false, "install a periodic sync job (systemd timer / LaunchAgent / schtasks)")
+	cmd.Flags().BoolVar(&uninstall, "uninstall", false, "remove the periodic sync job")
+	cmd.Flags().BoolVar(&status, "status", false, "report whether a periodic sync job is installed")
+	cmd.Flags().DurationVar(&interval, "interval", time.Hour, "interval between scheduled syncs (used with --install)")
 	return cmd
+}
+
+// runSyncSchedule dispatches the --install / --uninstall / --status
+// modes. They all share the same underlying schedule package and
+// the same JSON contract; keeping the modes here (instead of as
+// sub-commands) means users don't have to learn `tape sync
+// schedule install` etc. — just `tape sync --install`.
+//
+// --install + --uninstall together is a usage error; --status pairs
+// fine with either but short-circuits to read-only.
+func runSyncSchedule(cmd *cobra.Command, app *App, install, uninstall, status bool, interval time.Duration, remotes []string) error {
+	if install && uninstall {
+		return usageErrf("--install and --uninstall are mutually exclusive")
+	}
+	backend := schedule.Detect()
+
+	if status {
+		s, err := backend.Current()
+		if err != nil {
+			return err
+		}
+		return emitScheduleResult(app, "status", s, err)
+	}
+	if uninstall {
+		s, err := backend.Uninstall()
+		return emitScheduleResult(app, "uninstall", s, err)
+	}
+
+	// --install: figure out which binary to wire as the job.
+	// os.Executable returns the running tape binary, which is
+	// exactly what we want — if the user installed a beta and is
+	// scheduling from it, they want the beta scheduled.
+	exe, err := os.Executable()
+	if err != nil {
+		return cliError{Type: "schedule_failed", Message: "cannot resolve tape binary: " + err.Error()}
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	args := []string{"sync"}
+	for _, h := range remotes {
+		args = append(args, "--remote", h)
+	}
+	job := schedule.Job{Binary: exe, Args: args, Interval: interval}
+	s, err := backend.Install(job)
+	return emitScheduleResult(app, "install", s, err)
+}
+
+// emitScheduleResult is the shared printer for the three schedule
+// modes. We emit the same JSON envelope shape regardless of action;
+// the human path stays terse (one or two lines).
+func emitScheduleResult(app *App, action string, s schedule.Status, runErr error) error {
+	if app.useJSON() {
+		payload := map[string]any{"action": action, "status": s}
+		if runErr != nil {
+			payload["error"] = runErr.Error()
+		}
+		if err := emitJSON(payload); err != nil {
+			return err
+		}
+		return runErr
+	}
+	app.lead()
+	mark := app.green("✓")
+	if runErr != nil {
+		mark = app.yellow("!")
+	}
+	fmt.Printf("  %s %s (%s)\n", mark, app.bold(action), s.Backend)
+	if s.Path != "" {
+		fmt.Printf("  %s path %s\n", app.gray("·"), s.Path)
+	}
+	if s.Interval != "" {
+		fmt.Printf("  %s every %s\n", app.gray("·"), s.Interval)
+	}
+	if s.Detail != "" {
+		fmt.Printf("  %s %s\n", app.gray("·"), s.Detail)
+	}
+	if action == "status" && !s.Installed && runErr == nil {
+		fmt.Printf("  %s no scheduled sync; run `tape sync --install` to set one up\n", app.gray("·"))
+	}
+	return runErr
 }

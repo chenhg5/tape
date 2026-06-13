@@ -111,12 +111,20 @@ type Index interface {
 // --since, --host). RedactCopy is wired by the CLI when --no-redact
 // is *off* (the default); the snapshot writer otherwise passes file
 // bytes through unchanged.
+//
+// KeepIDs is the explicit-whitelist escape hatch the CLI's chunked
+// export modes lean on (--split-by agent/month/size). When non-nil
+// it takes precedence over Filter for the "which sessions go in"
+// decision; Filter still applies for everything else. We keep
+// Filter around because most exports never chunk and the simpler
+// path stays simpler.
 type ExportOpts struct {
 	ArchiveDir string
 	Output     string // local file path
 	Filter     Filter
-	Format     string // "tar" or "zip"
-	Compress   string // "zstd" | "gzip" | "xz" | "none"; only meaningful for tar
+	KeepIDs    []string // canonical "<agent>/<source-id>" form
+	Format     string   // "tar" or "zip"
+	Compress   string   // "zstd" | "gzip" | "xz" | "none"; only meaningful for tar
 	DryRun     bool
 	// RedactCopy, when non-nil, transforms file contents on the way
 	// into the artifact. Local archive files are never modified.

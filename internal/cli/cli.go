@@ -205,6 +205,7 @@ you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 		newSyncCmd(app), newLsCmd(app), newSearchCmd(app), newShowCmd(app),
 		newOverviewCmd(app), newExportCmd(app), newRestoreCmd(app),
 		newIndexCmd(app), newSchemaCmd(app, root),
+		newVersionCmd(app), newUpdateCmd(app),
 	)
 
 	err := root.Execute()

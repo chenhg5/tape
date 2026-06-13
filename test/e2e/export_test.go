@@ -180,6 +180,87 @@ func TestExportFilters(t *testing.T) {
 	}
 }
 
+// TestExportSplitByAgent: --split-by agent produces one artifact
+// per agent in the archive, each filename suffixed with the agent
+// name, and the per-chunk JSON envelope lists them all.
+func TestExportSplitByAgent(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	e.seedAllAgents()
+	e.mustRun(0, "sync")
+
+	dir := t.TempDir()
+	prefix := filepath.Join(dir, "snap.tar.zst")
+	d := e.mustRun(0, "export", "-o", prefix, "--split-by", "agent").data(t)
+	parts, ok := d["parts"].([]any)
+	if !ok || len(parts) < 2 {
+		t.Fatalf("agent split parts = %v", d)
+	}
+	// Every chunk file exists on disk and the per-chunk filename
+	// carries the agent name (".codex.tar.zst" etc).
+	seenAgents := map[string]bool{}
+	for _, raw := range parts {
+		p := raw.(map[string]any)
+		out := p["output"].(string)
+		if _, err := os.Stat(out); err != nil {
+			t.Errorf("chunk file missing: %v", err)
+		}
+		chunk := p["chunk"].(string)
+		if !strings.Contains(out, "."+chunk+".tar.zst") {
+			t.Errorf("chunk %q not present in filename %s", chunk, out)
+		}
+		seenAgents[chunk] = true
+	}
+	if len(seenAgents) < 2 {
+		t.Errorf("expected at least two distinct agents, got %v", seenAgents)
+	}
+}
+
+// TestExportSplitBySize: --split-by size writes one or more
+// part-### files. With a tiny budget the seed archive must split
+// across at least two parts.
+func TestExportSplitBySize(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	e.seedAllAgents()
+	e.mustRun(0, "sync")
+
+	dir := t.TempDir()
+	prefix := filepath.Join(dir, "snap.tar.zst")
+	d := e.mustRun(0, "export", "-o", prefix, "--split-by", "size", "--split-size", "1K").data(t)
+	parts := d["parts"].([]any)
+	if len(parts) < 2 {
+		t.Fatalf("size split: expected >=2 parts, got %d (%v)", len(parts), parts)
+	}
+	for i, raw := range parts {
+		p := raw.(map[string]any)
+		chunk := p["chunk"].(string)
+		want := fmt.Sprintf("part-%03d", i+1)
+		if chunk != want {
+			t.Errorf("part #%d chunk = %q, want %q", i, chunk, want)
+		}
+	}
+}
+
+// TestExportSplitUsageErrors: bad --split-by, bad --split-size,
+// both surface as usage errors (exit 2) before any walking.
+func TestExportSplitUsageErrors(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	if r := e.run("export", "--split-by", "daily"); r.code != 2 {
+		t.Errorf("--split-by daily: exit %d, want 2", r.code)
+	}
+	if r := e.run("export", "--split-by", "size", "--split-size", "wat"); r.code != 2 {
+		t.Errorf("--split-size wat: exit %d, want 2", r.code)
+	}
+}
+
 // positional output works the same as -o; --output + positional
 // together is a usage error so the call site is unambiguous.
 func TestExportPositionalOutput(t *testing.T) {

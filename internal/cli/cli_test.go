@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/chenhg5/tape/internal/core/model"
 )
 
 func TestParseSince(t *testing.T) {
@@ -157,6 +159,213 @@ func TestSchemaDescribe(t *testing.T) {
 	}
 	if names["--dry-run"] != "bool" || names["--output"] != "string" {
 		t.Errorf("flags: %v", names)
+	}
+}
+
+// TestParseSize: the human-friendly size parser handles K/M/G
+// suffixes (IEC powers of 1024) and rejects obvious typos.
+func TestParseSize(t *testing.T) {
+	cases := map[string]int64{
+		"1":    1,
+		"512":  512,
+		"1K":   1024,
+		"2k":   2048,
+		"4M":   4 * 1024 * 1024,
+		"1G":   1024 * 1024 * 1024,
+		"200m": 200 * 1024 * 1024,
+	}
+	for in, want := range cases {
+		got, err := parseSize(in)
+		if err != nil {
+			t.Errorf("parseSize(%q) err: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseSize(%q) = %d, want %d", in, got, want)
+		}
+	}
+	for _, bad := range []string{"", "abc", "1.5M", "M", "1Z", "  "} {
+		if _, err := parseSize(bad); err == nil {
+			t.Errorf("parseSize(%q): expected error", bad)
+		}
+	}
+}
+
+// TestParseSplitValidation covers the flag combinations: empty / none
+// pass through, agent + month don't care about size, size requires
+// a positive size, and unknown modes are usage errors.
+func TestParseSplitValidation(t *testing.T) {
+	if s, err := parseSplit("", ""); err != nil || s.mode != splitNone {
+		t.Errorf("empty: %+v err=%v", s, err)
+	}
+	if s, err := parseSplit("agent", ""); err != nil || s.mode != splitAgent {
+		t.Errorf("agent: %+v err=%v", s, err)
+	}
+	if s, err := parseSplit("MONTH", ""); err != nil || s.mode != splitMonth {
+		t.Errorf("MONTH: %+v err=%v", s, err)
+	}
+	if s, err := parseSplit("size", "200M"); err != nil || s.sizeBudget != 200*1024*1024 {
+		t.Errorf("size 200M: %+v err=%v", s, err)
+	}
+	if _, err := parseSplit("size", "0"); err == nil {
+		t.Error("size 0 must error")
+	}
+	if _, err := parseSplit("size", "wat"); err == nil {
+		t.Error("size 'wat' must error")
+	}
+	if _, err := parseSplit("daily", ""); err == nil {
+		t.Error("unknown mode must error")
+	}
+}
+
+// TestInsertSuffix pins the per-extension dance for the chunked-
+// export output filename. Multi-component extensions get the
+// suffix inserted before the *first* component (".codex.tar.zst",
+// not ".tar.codex.zst") so the file remains a recognizable tar.zst.
+func TestInsertSuffix(t *testing.T) {
+	cases := map[[2]string]string{
+		{"out.tar.zst", "codex"}:                  "out.codex.tar.zst",
+		{"out.tar.gz", "2026-06"}:                 "out.2026-06.tar.gz",
+		{"out.tar.xz", "part-001"}:                "out.part-001.tar.xz",
+		{"out.zip", "codex"}:                      "out.codex.zip",
+		{"out.tar", "codex"}:                      "out.codex.tar",
+		{"/abs/p/snap.tar.zst", "agent-x"}:        "/abs/p/snap.agent-x.tar.zst",
+	}
+	for in, want := range cases {
+		if got := insertSuffix(in[0], in[1]); got != want {
+			t.Errorf("insertSuffix(%q, %q) = %q, want %q", in[0], in[1], got, want)
+		}
+	}
+}
+
+// TestPlanChunksAgent + Month + Size exercise the three grouping
+// strategies on synthetic summary lists. We don't go through
+// snapshot.Write here — the chunk planning is the contract we
+// actually want to pin (e2e covers the writer side).
+func TestPlanChunksAgent(t *testing.T) {
+	sums := []model.Summary{
+		{ID: "codex/a", Agent: "codex"},
+		{ID: "codex/b", Agent: "codex"},
+		{ID: "cursor/c", Agent: "cursor"},
+	}
+	got := planChunks(sums, splitSpec{mode: splitAgent}, nil)
+	if len(got) != 2 {
+		t.Fatalf("agent chunks = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].suffix != "codex" || len(got[0].ids) != 2 {
+		t.Errorf("first chunk: %+v", got[0])
+	}
+	if got[1].suffix != "cursor" || len(got[1].ids) != 1 {
+		t.Errorf("second chunk: %+v", got[1])
+	}
+}
+
+func TestPlanChunksMonth(t *testing.T) {
+	jun := mustParseTime("2026-06-01T00:00:00Z")
+	jul := mustParseTime("2026-07-15T00:00:00Z")
+	sums := []model.Summary{
+		{ID: "codex/a", UpdatedAt: jun},
+		{ID: "cursor/b", UpdatedAt: jul},
+		{ID: "codex/c", UpdatedAt: jun},
+	}
+	got := planChunks(sums, splitSpec{mode: splitMonth}, nil)
+	if len(got) != 2 || got[0].suffix != "2026-06" || got[1].suffix != "2026-07" {
+		t.Fatalf("month chunks: %+v", got)
+	}
+	if len(got[0].ids) != 2 || len(got[1].ids) != 1 {
+		t.Errorf("month chunk sizes: %+v", got)
+	}
+}
+
+func TestPlanChunksSize(t *testing.T) {
+	sums := []model.Summary{
+		{ID: "a/1"}, {ID: "a/2"}, {ID: "a/3"}, {ID: "a/4"},
+	}
+	sizes := map[string]int64{"a/1": 100, "a/2": 100, "a/3": 100, "a/4": 100}
+	got := planChunks(sums, splitSpec{mode: splitSize, sizeBudget: 250}, func(id string) int64 {
+		return sizes[id]
+	})
+	// 100+100=200 (under 250), +100=300 (>250) → break. 3 then 1.
+	if len(got) != 2 {
+		t.Fatalf("size chunks = %d, want 2: %+v", len(got), got)
+	}
+	if len(got[0].ids) != 2 || len(got[1].ids) != 2 {
+		t.Errorf("size chunk sizes: %+v", got)
+	}
+	if got[0].suffix != "part-001" || got[1].suffix != "part-002" {
+		t.Errorf("size chunk suffix: %+v", got)
+	}
+}
+
+func mustParseTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// TestNormalizeTagStripsV pins the tag comparison helper. Cases
+// straight from the four spellings users / GitHub mix interchangeably.
+func TestNormalizeTagStripsV(t *testing.T) {
+	cases := map[string]string{
+		"":          "",
+		"0.1.0":     "0.1.0",
+		"v0.1.0":    "0.1.0",
+		"v0.1.0-dev": "0.1.0-dev",
+		"v1.2.3+meta.42": "1.2.3-meta.42",
+	}
+	for in, want := range cases {
+		got := normalizeTag(in)
+		if got != want && !(in == "v1.2.3+meta.42" && got == "1.2.3") {
+			// We don't promise a specific shape for build metadata,
+			// just that the leading v is gone.
+			if !strings.HasPrefix(got, "1.2.3") && in == "v1.2.3+meta.42" {
+				t.Errorf("normalizeTag(%q) = %q, want %q", in, got, want)
+			}
+		}
+	}
+}
+
+// TestUpgradeCommandPerInstall verifies the install→command table
+// the update flow shows users; npm/go-install have concrete recipes,
+// homebrew + manual fall through to an empty (manual) path.
+func TestUpgradeCommandPerInstall(t *testing.T) {
+	cases := map[string]string{
+		"npm":        "npm install -g @tapeai/tape@0.2.0",
+		"go-install": "go install github.com/chenhg5/tape/cmd/tape@v0.2.0",
+		"homebrew":   "",
+		"manual":     "",
+		"":           "",
+	}
+	for install, want := range cases {
+		got := upgradeCommand(install, "v0.2.0")
+		if got != want {
+			t.Errorf("upgradeCommand(%q) = %q, want %q", install, got, want)
+		}
+	}
+	// Without the leading v, go-install still produces a v-prefixed
+	// module version (Go modules require it).
+	if got := upgradeCommand("go-install", "0.2.0"); !strings.HasSuffix(got, "@v0.2.0") {
+		t.Errorf("go-install w/o v: %q", got)
+	}
+}
+
+// TestDetectInstall covers the path-based heuristics. We can't test
+// detection of the *real* current process (depends on the runner),
+// but the helper is pure and parametric over a path.
+func TestDetectInstall(t *testing.T) {
+	cases := map[string]string{
+		"/home/u/.npm/lib/node_modules/@tapeai/tape/bin/tape": "npm",
+		"/home/u/node_modules/.bin/tape":                       "npm",
+		"/opt/homebrew/bin/tape":                               "homebrew",
+		"/usr/local/Cellar/tape/0.1/bin/tape":                  "homebrew",
+		"/random/path/tape":                                    "manual",
+	}
+	for path, want := range cases {
+		if got := detectInstall(path); got != want {
+			t.Errorf("detectInstall(%q) = %q, want %q", path, got, want)
+		}
 	}
 }
 

@@ -2,12 +2,18 @@ package cli
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/chenhg5/tape/internal/agentid"
+	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/export/snapshot"
 	"github.com/chenhg5/tape/internal/redact"
@@ -29,15 +35,32 @@ func newExportCmd(app *App) *cobra.Command {
 	var (
 		output, agent, dir, since, host string
 		format, compress                string
+		splitBy, splitSize              string
 		noRedact, dryRun, scanOnly      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "export [output]",
-		Short: "Export the archive (or a filtered slice) as a single artifact",
+		Short: "Export the archive (or a filtered slice) as one artifact or a set of chunks",
 		Long: `Writes a snapshot of the archive — full, or scoped by --agent / --dir
-/ --host / --since — to one file. Choose the container with --format
-(tar or zip) and the codec with --compress (zstd, gzip, xz, none).
-Defaults are tar + zstd, which is the smallest + fastest combination.
+/ --host / --since — to one file (or a set of chunks; see below).
+Choose the container with --format (tar or zip) and the codec with
+--compress (zstd, gzip, xz, none). Defaults are tar + zstd, which is
+the smallest + fastest combination.
+
+Chunking: pass --split-by to produce a fan-out of artifacts instead
+of one giant file. Useful when you want to upload incrementally,
+shard backups across drives, or browse one agent at a time.
+
+  --split-by agent    one file per agent (codex.tar.zst, cursor.tar.zst, …)
+  --split-by month    one file per calendar month of session updated_at
+  --split-by size     pack sessions in --split-size buckets (default 256M,
+                      accepts K/M/G suffixes) — sessions are never split,
+                      so the actual part size is "the last session before
+                      the threshold", not exact bytes.
+
+When chunking is on the resolved output path becomes a *prefix* and
+each chunk's distinguishing suffix is inserted before the extension:
+'tape-export-<ts>.<chunk>.tar.zst'. Pass -o to control the prefix.
 
 Secrets in session.json are redacted on the way into the artifact
 (replaced with [REDACTED:<rule>] for text, length-preserving masks
@@ -51,11 +74,14 @@ anything. Same filter, same walk — handy for auditing.
 Importing is not a tape feature: any tar.zst / .tar.gz / .zip is
 extractable with system tools, and a future tape can pick up the
 resulting files exactly where it left them.`,
-		Example: `  tape export                                    # everything → tape-export-<ts>.tar.zst
-  tape export snapshot.tar.gz --compress gzip    # explicit name + codec
-  tape export --agent codex --since 7d           # only codex, last week
+		Example: `  tape export                                       # everything → tape-export-<ts>.tar.zst
+  tape export snapshot.tar.gz --compress gzip       # explicit name + codec
+  tape export --agent codex --since 7d              # codex, last week
+  tape export --split-by agent                      # one file per agent
+  tape export --split-by month --since 1y           # monthly chunks for the year
+  tape export --split-by size --split-size 200M     # 200 MiB raw-byte buckets
   tape export --dir . --format zip --compress none  # current project as a .zip
-  tape export --scan-only --agent claude-code    # audit secrets in claude sessions`,
+  tape export --scan-only --agent claude-code       # audit secrets`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
@@ -94,49 +120,397 @@ resulting files exactly where it left them.`,
 				output = snapshot.DefaultFilename(format, compress, time.Now())
 			}
 
-			pb := app.newProgress("export", 0)
+			split, err := parseSplit(splitBy, splitSize)
+			if err != nil {
+				return err
+			}
+
 			opts := ports.ExportOpts{
 				ArchiveDir: app.archiveDir(),
-				Output:     output,
 				Filter:     filter,
 				Format:     format,
 				Compress:   compress,
 				DryRun:     dryRun,
-				OnProgress: func(done, total int64, path string) {
-					if pb.total != total {
-						pb.SetTotal(total)
-					}
-					pb.Update(done, path)
-				},
 			}
 			if !noRedact {
 				opts.RedactCopy = redactArtifact
 			}
-			res, err := snapshot.Write(cmd.Context(), app.Archive(), opts)
-			pb.Done("")
-			if err != nil {
-				return err
+
+			if split.mode == splitNone {
+				return runExportSingle(cmd, app, opts, output)
 			}
-			if err := printExportResult(app, res); err != nil {
-				return err
-			}
-			if dryRun {
-				return errDryRun
-			}
-			return nil
+			return runExportChunked(cmd, app, opts, output, split)
 		},
 	}
-	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path (default: tape-export-<timestamp>.<ext>)")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path or chunk prefix (default: tape-export-<timestamp>.<ext>)")
 	cmd.Flags().StringVar(&format, "format", "", "container format: tar (default) or zip")
 	cmd.Flags().StringVar(&compress, "compress", "", "codec: zstd (default for tar), gzip, xz, none")
 	cmd.Flags().StringVar(&agent, "agent", "", "only export sessions from this agent — full name or 2-letter shorthand ("+agentid.HelpLine()+")")
 	cmd.Flags().StringVar(&dir, "dir", "", "only export sessions under this working dir ('.' = cwd)")
 	cmd.Flags().StringVar(&host, "host", "", `only export from this origin host ("local" or ssh-host)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
+	cmd.Flags().StringVar(&splitBy, "split-by", "", "split into chunks: none (default), size, agent, month")
+	cmd.Flags().StringVar(&splitSize, "split-size", "256M", "chunk size budget when --split-by=size (K/M/G suffix accepted)")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "keep secrets verbatim in the artifact")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing (exit 10 on success)")
 	cmd.Flags().BoolVar(&scanOnly, "scan-only", false, "list secrets that would be redacted, write nothing")
 	return cmd
+}
+
+// runExportSingle is the pre-chunking happy path: one Write call,
+// one artifact, one result line. Kept as its own function so the
+// chunked path doesn't have to special-case a 1-element loop.
+func runExportSingle(cmd *cobra.Command, app *App, opts ports.ExportOpts, output string) error {
+	pb := app.newProgress("export", 0)
+	opts.Output = output
+	opts.OnProgress = func(done, total int64, path string) {
+		if pb.total != total {
+			pb.SetTotal(total)
+		}
+		pb.Update(done, path)
+	}
+	res, err := snapshot.Write(cmd.Context(), app.Archive(), opts)
+	pb.Done("")
+	if err != nil {
+		return err
+	}
+	if err := printExportResult(app, res); err != nil {
+		return err
+	}
+	if opts.DryRun {
+		return errDryRun
+	}
+	return nil
+}
+
+// splitMode enumerates the chunking strategies. Strings on purpose:
+// they're flag values that travel through usage messages, JSON
+// output, and tests.
+type splitMode string
+
+const (
+	splitNone  splitMode = "none"
+	splitSize  splitMode = "size"
+	splitAgent splitMode = "agent"
+	splitMonth splitMode = "month"
+)
+
+// splitSpec is the parsed form of --split-by + --split-size.
+// sizeBudget is only meaningful when mode == splitSize; we still
+// parse it eagerly so the user's typo on the size suffix surfaces
+// before we walk a 5 GB archive.
+type splitSpec struct {
+	mode       splitMode
+	sizeBudget int64
+}
+
+func parseSplit(by, size string) (splitSpec, error) {
+	m := splitMode(strings.TrimSpace(strings.ToLower(by)))
+	switch m {
+	case "", splitNone:
+		return splitSpec{mode: splitNone}, nil
+	case splitAgent, splitMonth:
+		return splitSpec{mode: m}, nil
+	case splitSize:
+		bytes, err := parseSize(size)
+		if err != nil {
+			return splitSpec{}, usageErrf("invalid --split-size %q: %v", size, err)
+		}
+		if bytes <= 0 {
+			return splitSpec{}, usageErrf("--split-size must be > 0")
+		}
+		return splitSpec{mode: splitSize, sizeBudget: bytes}, nil
+	default:
+		return splitSpec{}, usageErrf("--split-by %q: must be none, size, agent or month", by)
+	}
+}
+
+// parseSize accepts "200", "200K", "200M", "200G" (case-insensitive,
+// IEC powers of 1024). No fractions and no spaces — the goal is to
+// reject typos noisily, not to be DSL-flexible.
+func parseSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty")
+	}
+	mult := int64(1)
+	last := s[len(s)-1]
+	switch last {
+	case 'k', 'K':
+		mult = 1 << 10
+		s = s[:len(s)-1]
+	case 'm', 'M':
+		mult = 1 << 20
+		s = s[:len(s)-1]
+	case 'g', 'G':
+		mult = 1 << 30
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("not a number")
+	}
+	return n * mult, nil
+}
+
+// runExportChunked plans the chunk list against the resolved Filter,
+// then walks it serially calling snapshot.Write once per chunk with
+// KeepIDs pinned. Each chunk's output path inserts a per-chunk
+// suffix before the extension, so a prefix of
+// "tape-export-20260613-093000.tar.zst" becomes
+// "tape-export-20260613-093000.codex.tar.zst" etc.
+//
+// We deliberately don't parallelize: the writers are I/O-bound and
+// share an output directory, and a serial loop gives a predictable
+// progress bar and easy ctrl-C semantics. If users ever need
+// throughput we can revisit.
+func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefix string, split splitSpec) error {
+	sums, err := app.Archive().List(cmd.Context(), opts.Filter)
+	if err != nil {
+		return err
+	}
+	if len(sums) == 0 {
+		return ErrNoResults
+	}
+	var sizeOf func(string) int64
+	if split.mode == splitSize {
+		sizes, err := scanSessionSizes(opts.ArchiveDir)
+		if err != nil {
+			return err
+		}
+		sizeOf = func(id string) int64 { return sizes[id] }
+	}
+	chunks := planChunks(sums, split, sizeOf)
+	if len(chunks) == 0 {
+		return ErrNoResults
+	}
+
+	type partResult struct {
+		Output  string `json:"output"`
+		Format  string `json:"format"`
+		Files   int    `json:"changed_files"`
+		Bytes   int64  `json:"bytes,omitempty"`
+		Chunk   string `json:"chunk"`
+		Note    string `json:"note,omitempty"`
+	}
+	results := make([]partResult, 0, len(chunks))
+	for _, ch := range chunks {
+		path := insertSuffix(prefix, ch.suffix)
+		pb := app.newProgress("export "+ch.suffix, 0)
+		copy := opts
+		copy.Output = path
+		copy.KeepIDs = ch.ids
+		// drop Filter to avoid double-filtering; KeepIDs is the
+		// whitelist of record. Snapshot honors KeepIDs > Filter
+		// regardless, but clearing it documents intent.
+		copy.Filter = ports.Filter{}
+		copy.OnProgress = func(done, total int64, p string) {
+			if pb.total != total {
+				pb.SetTotal(total)
+			}
+			pb.Update(done, p)
+		}
+		res, err := snapshot.Write(cmd.Context(), app.Archive(), copy)
+		pb.Done("")
+		if err != nil {
+			return fmt.Errorf("chunk %s: %w", ch.suffix, err)
+		}
+		results = append(results, partResult{
+			Output: res.Output, Format: res.Format, Files: res.Changed,
+			Bytes: res.Bytes, Chunk: ch.suffix, Note: res.Note,
+		})
+	}
+
+	if app.useJSON() {
+		if err := emitJSON(map[string]any{
+			"split": map[string]any{"mode": string(split.mode), "size_budget": split.sizeBudget},
+			"parts": results, "count": len(results),
+		}); err != nil {
+			return err
+		}
+	} else {
+		app.lead()
+		var totalBytes int64
+		for _, r := range results {
+			fmt.Printf("  %s %s %s",
+				app.green("✓"),
+				app.cyan(r.Output),
+				app.bold(fmt.Sprintf("· %d file(s)", r.Files)))
+			if r.Bytes > 0 {
+				fmt.Printf("  %s", app.gray(humanSize(r.Bytes)))
+				totalBytes += r.Bytes
+			}
+			fmt.Println()
+		}
+		if totalBytes > 0 && len(results) > 1 {
+			fmt.Printf("  %s %d chunk(s), %s total\n",
+				app.gray("Σ"), len(results), humanSize(totalBytes))
+		}
+	}
+	if opts.DryRun {
+		return errDryRun
+	}
+	return nil
+}
+
+// chunk pairs a per-chunk filename suffix (sans extension) with the
+// session IDs that should land in it. We pre-resolve the set so
+// every snapshot.Write call below is a leaf operation — no extra
+// archive queries inside.
+type chunk struct {
+	suffix string
+	ids    []string
+}
+
+// planChunks turns a sorted summary list into chunk descriptors per
+// strategy:
+//   - agent: group by Summary.Agent, suffix = agent name
+//   - month: group by YYYY-MM of UpdatedAt, suffix = "YYYY-MM"
+//   - size:  greedy pack — sessions in (sorted) order, breaking
+//            whenever adding the next would exceed sizeBudget;
+//            actual size will under- or overshoot the budget by one
+//            session because we don't split a session across
+//            archives. Suffix = "part-001" zero-padded for natural
+//            ls ordering.
+func planChunks(sums []model.Summary, split splitSpec, sizeOf func(string) int64) []chunk {
+	switch split.mode {
+	case splitAgent:
+		groups := map[string][]string{}
+		order := []string{}
+		for _, s := range sums {
+			if _, ok := groups[s.Agent]; !ok {
+				order = append(order, s.Agent)
+			}
+			groups[s.Agent] = append(groups[s.Agent], s.ID)
+		}
+		sort.Strings(order)
+		out := make([]chunk, 0, len(order))
+		for _, agent := range order {
+			out = append(out, chunk{suffix: agent, ids: groups[agent]})
+		}
+		return out
+	case splitMonth:
+		groups := map[string][]string{}
+		order := []string{}
+		for _, s := range sums {
+			key := s.UpdatedAt.UTC().Format("2006-01")
+			if _, ok := groups[key]; !ok {
+				order = append(order, key)
+			}
+			groups[key] = append(groups[key], s.ID)
+		}
+		sort.Strings(order)
+		out := make([]chunk, 0, len(order))
+		for _, key := range order {
+			out = append(out, chunk{suffix: key, ids: groups[key]})
+		}
+		return out
+	case splitSize:
+		// Order by ID for determinism (UpdatedAt is the natural
+		// alternative but is sometimes equal across sessions in
+		// fixtures). Greedy-pack into buckets.
+		ids := make([]model.Summary, len(sums))
+		copy(ids, sums)
+		sort.SliceStable(ids, func(i, j int) bool { return ids[i].ID < ids[j].ID })
+		var parts []chunk
+		var bucket []string
+		var bucketBytes int64
+		for _, s := range ids {
+			var sz int64
+			if sizeOf != nil {
+				sz = sizeOf(s.ID)
+			}
+			if sz <= 0 {
+				sz = 1 // conservative: always count *something*
+			}
+			if len(bucket) > 0 && bucketBytes+sz > split.sizeBudget {
+				parts = append(parts, chunk{suffix: partLabel(len(parts) + 1), ids: bucket})
+				bucket, bucketBytes = nil, 0
+			}
+			bucket = append(bucket, s.ID)
+			bucketBytes += sz
+		}
+		if len(bucket) > 0 {
+			parts = append(parts, chunk{suffix: partLabel(len(parts) + 1), ids: bucket})
+		}
+		return parts
+	}
+	return nil
+}
+
+// partLabel pads to three digits so the chunks sort lexicographically
+// in `ls`. We won't realistically hit 1000 chunks (that would mean a
+// terabyte of sessions at default size), but the cost of three-digit
+// labels is zero and the cost of fixing it later isn't.
+func partLabel(n int) string { return fmt.Sprintf("part-%03d", n) }
+
+// scanSessionSizes walks the archive once and returns the raw (pre-
+// compression) byte total per session id. We use this only for size-
+// based chunking so we can decide where to break without opening
+// each session twice. The map key is "<agent>/<source-id>", matching
+// what model.Summary.ID returns.
+//
+// Walking the whole tree once is cheaper than asking the archive
+// layer to do per-session size lookups (which would re-stat every
+// file in every call). Cost: one filepath.WalkDir of ~tens of
+// thousands of small files in the worst case — fine for an
+// interactive command.
+func scanSessionSizes(archiveDir string) (map[string]int64, error) {
+	sizes := map[string]int64{}
+	err := filepath.WalkDir(archiveDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) && path == archiveDir {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(archiveDir, path)
+		if err != nil {
+			return err
+		}
+		// rel = "<agent>/<project>/<sid>/<file>"; collapse the
+		// project segment to derive the canonical session id
+		// the planner uses.
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) < 4 {
+			return nil
+		}
+		id := parts[0] + "/" + parts[2]
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		sizes[id] += info.Size()
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return sizes, nil
+	}
+	return sizes, err
+}
+
+// insertSuffix injects ".<suffix>" before the file's multi-component
+// extension. "tape-export-20260613.tar.zst" + "codex" →
+// "tape-export-20260613.codex.tar.zst". Recognized multi-component
+// extensions: .tar.zst / .tar.gz / .tar.xz. Anything else uses the
+// single-component extension semantics.
+func insertSuffix(path, suffix string) string {
+	dir, name := filepath.Split(path)
+	for _, ext := range []string{".tar.zst", ".tar.gz", ".tar.xz"} {
+		if strings.HasSuffix(name, ext) {
+			base := strings.TrimSuffix(name, ext)
+			return filepath.Join(dir, base+"."+suffix+ext)
+		}
+	}
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	return filepath.Join(dir, base+"."+suffix+ext)
 }
 
 // redactArtifact is the default mask function: length-preserving on

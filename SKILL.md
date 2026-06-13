@@ -106,25 +106,65 @@ Strategies, highest fidelity first:
 `memory`. For agents the recommended call is explicit, e.g.
 `tape restore @last --to cursor --strategy memory --json`.
 
-**Export** the archive (or a filtered slice) as one file. Tape only
-*generates* the snapshot — uploading to S3/git/Drive is the caller's
-job, by design:
+**Export** the archive (or a filtered slice) as one file — or split
+across several. Tape only *generates* the snapshot — uploading to
+S3/git/Drive is the caller's job, by design:
 
 ```bash
 tape export                                    # tape-export-<ts>.tar.zst in cwd
 tape export snapshot.tar.gz --compress gzip    # explicit name + codec
 tape export --agent codex --since 7d           # filter-scoped slice
 tape export --dir . --format zip --compress none  # current project as a .zip
+tape export --split-by agent                   # one file per agent
+tape export --split-by month --since 1y        # one file per calendar month
+tape export --split-by size --split-size 200M  # 200 MiB buckets
 tape export --scan-only                        # audit secrets, write nothing
 ```
 
 `--format tar|zip` × `--compress zstd|gzip|xz|none` (zip implies its own
 DEFLATE so `--compress zstd` etc. is a usage error). Default is tar+zstd.
+For large archives use `--split-by none|size|agent|month` to fan out;
+the chunk discriminator (agent name / `YYYY-MM` / `part-001` …) is
+inserted before the extension and every chunk is listed under `parts[]`
+in the JSON envelope.
 Secrets in `session.json` are redacted in stream
 (`[REDACTED:<rule>]` for text, length-preserving masks for binaries);
 pass `--no-redact` for verbatim bytes. `--scan-only` is exit 0 even when
 findings exist — it's an audit mode, not a gate (the redactor is the
 gate, and it always runs on real exports).
+
+**Keep the archive fresh** — `tape sync` is idempotent and cheap, but
+the user has to remember to run it. Three options, lowest to highest
+effort:
+
+```bash
+tape sync                                # ad-hoc, on demand
+tape sync --install --interval 1h        # systemd timer / LaunchAgent / schtasks
+tape sync --status                       # is one installed?
+tape sync --uninstall                    # remove it
+```
+
+`--install` writes a user-scoped job — systemd user timer on Linux
+(`~/.config/systemd/user/tape-sync.timer`), LaunchAgent on macOS
+(`~/Library/LaunchAgents/com.tapeai.sync.plist`), or a printed
+`schtasks /Create` command on Windows. The job runs as the user,
+never root. Repeat `--remote user@host` flags are preserved in the
+unit file so scheduled syncs cover remote machines too.
+
+**Versioning & updates** — no background pings; checks are explicit:
+
+```bash
+tape version                       # version, commit, build date, install method
+tape update --check                # any newer release? exit non-zero if so
+tape update                        # upgrade in place via the matching installer
+tape update --channel beta --dry-run
+```
+
+`tape update` reads the install method from `tape version` and runs
+the right thing: `npm install -g @tapeai/tape@<tag>` for npm,
+`go install github.com/chenhg5/tape/cmd/tape@<tag>` for `go install`.
+Homebrew / manual installs get the suggested command printed but
+nothing is executed.
 
 ## Conventions
 

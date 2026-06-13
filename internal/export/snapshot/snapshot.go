@@ -122,7 +122,7 @@ func Write(ctx context.Context, archive ports.Archive, opts ports.ExportOpts) (*
 		return nil, err
 	}
 
-	keep, err := buildKeep(ctx, archive, opts.Filter)
+	keep, err := buildKeep(ctx, archive, opts.Filter, opts.KeepIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -281,16 +281,20 @@ func pipeFiles(opts ports.ExportOpts, keep func(string) bool, total int64,
 	return count, err
 }
 
-// buildKeep turns a Filter into a predicate over archive-relative
-// paths. The empty filter accepts everything — that's the common case
-// (full export) and we don't want to pay an archive.List for it.
+// buildKeep turns a Filter (or an explicit KeepIDs whitelist) into a
+// predicate over archive-relative paths. The empty case accepts
+// everything — that's the common full-export path and we don't want
+// to pay an archive.List for it.
 //
-// With any filter set we ask the archive layer to list the matching
-// summaries, then keep every file under those session directories.
-// Doing the resolution here (not at the CLI layer) means the snapshot
-// package owns the "kept set" abstraction end-to-end and tests don't
-// have to thread an Archive into every Filter case.
-func buildKeep(ctx context.Context, archive ports.Archive, f ports.Filter) (func(string) bool, error) {
+// Precedence is: KeepIDs > Filter > no filter. KeepIDs is the
+// chunked-export escape hatch (the CLI resolves a Filter into IDs
+// and then hands distinct slices to distinct Write calls); when
+// it's set we go straight to predicate construction without asking
+// the archive for anything.
+func buildKeep(ctx context.Context, archive ports.Archive, f ports.Filter, keepIDs []string) (func(string) bool, error) {
+	if len(keepIDs) > 0 {
+		return predicateForIDs(keepIDs), nil
+	}
 	if filterIsEmpty(f) {
 		return func(string) bool { return true }, nil
 	}
@@ -304,34 +308,42 @@ func buildKeep(ctx context.Context, archive ports.Archive, f ports.Filter) (func
 	if len(sums) == 0 {
 		return func(string) bool { return false }, nil
 	}
-	// A summary ID is "<agent>/<source-id>"; the archive lays sessions
-	// out as "<agent>/<project-slug>/<source-id>/...". We can't recover
-	// the project slug from the summary alone (it's a function of CWD),
-	// so we glob for any directory ending in /<source-id>.
-	keepDir := map[string]struct{}{}
+	ids := make([]string, 0, len(sums))
 	for _, s := range sums {
-		agent, sourceID, ok := strings.Cut(s.ID, "/")
+		ids = append(ids, s.ID)
+	}
+	return predicateForIDs(ids), nil
+}
+
+// predicateForIDs builds the kept-path predicate from a list of
+// canonical session IDs ("<agent>/<source-id>"). The archive lays
+// sessions out as "<agent>/<project-slug>/<source-id>/..." and we
+// can't recover the project slug from the ID alone (it's a function
+// of CWD), so we match on the agent prefix + /<source-id>/ midfix.
+func predicateForIDs(ids []string) func(string) bool {
+	type entry struct{ agent, sid string }
+	want := make([]entry, 0, len(ids))
+	for _, id := range ids {
+		agent, sid, ok := strings.Cut(id, "/")
 		if !ok {
 			continue
 		}
-		keepDir[agent+"/"+sourceID] = struct{}{}
+		want = append(want, entry{agent: agent, sid: sid})
 	}
 	return func(rel string) bool {
 		rel = filepath.ToSlash(rel)
-		for k := range keepDir {
-			agent, sid, _ := strings.Cut(k, "/")
-			// Match any path shaped <agent>/.../<sid> or descendant.
-			if !strings.HasPrefix(rel, agent+"/") {
+		for _, e := range want {
+			if !strings.HasPrefix(rel, e.agent+"/") {
 				continue
 			}
-			if strings.HasSuffix(rel, "/"+sid+"/session.json") ||
-				strings.HasSuffix(rel, "/"+sid+"/meta.json") ||
-				strings.Contains(rel, "/"+sid+"/") {
+			if strings.HasSuffix(rel, "/"+e.sid+"/session.json") ||
+				strings.HasSuffix(rel, "/"+e.sid+"/meta.json") ||
+				strings.Contains(rel, "/"+e.sid+"/") {
 				return true
 			}
 		}
 		return false
-	}, nil
+	}
 }
 
 func filterIsEmpty(f ports.Filter) bool {
@@ -378,7 +390,7 @@ func walkFiles(root string, fn func(path, rel string) error) error {
 // excludes session X" rule applies to both paths automatically.
 func Scan(ctx context.Context, archive ports.Archive, opts ports.ExportOpts,
 	scanFn func(path string, data []byte) []Finding) ([]Finding, error) {
-	keep, err := buildKeep(ctx, archive, opts.Filter)
+	keep, err := buildKeep(ctx, archive, opts.Filter, opts.KeepIDs)
 	if err != nil {
 		return nil, err
 	}
