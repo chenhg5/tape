@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
-# Build platform binaries and publish tape to npm.
+# Publish tape to npm as a single package.
+#
+# The package itself ships only ~10 KB (install.js + run.js +
+# package.json + README.md). On `npm install` the postinstall hook
+# fetches the right prebuilt binary for the user's OS/arch from the
+# release mirror (GitHub or Gitee, fastest wins) and verifies sha256.
+#
+# This intentionally does NOT cross-compile binaries or publish
+# per-platform sub-packages — we already host the same binaries on
+# the GitHub + Gitee releases (built by release-binaries.sh), so
+# republishing them inside npm packages is pure duplication and gave
+# us six packages to keep in sync per release. See npm/README.md for
+# the trade-off table.
 #
 # Usage:
 #   scripts/release-npm.sh <version> [latest|beta]
@@ -7,28 +19,24 @@
 #   scripts/release-npm.sh 0.2.0              # stable:  npm i -g @tapeai/tape
 #   scripts/release-npm.sh 0.3.0-beta.1 beta  # beta:    npm i -g @tapeai/tape@beta
 #
-# Environment:
-#   NPM_PACKAGE   package name (default: @tapeai/tape). Platform packages
-#                 become <name>-linux-x64 etc. Scoped names like the
-#                 default produce @tapeai/tape-linux-x64; unscoped names
-#                 produce e.g. tape-cli-linux-x64.
-#   NPM_DRY_RUN   set to 1 to run `npm publish --dry-run` (nothing uploaded)
+# Prerequisites:
+#   - `scripts/release-binaries.sh <version>` has already published
+#     the matching binaries to both GitHub and Gitee releases — the
+#     npm postinstall fetches from there.
+#   - `npm login` (with publish rights on the @tapeai org).
 #
-# Requires: go, npm (logged in: `npm login`, with publish rights on the
-# @tapeai org for the default name), run from the repo root. Scoped
-# packages always need --access public on first publish; the script
-# passes it unconditionally so re-publishing is safe.
+# Environment:
+#   NPM_PACKAGE   package name (default: @tapeai/tape)
+#   NPM_DRY_RUN   set to 1 to run `npm publish --dry-run` (nothing uploaded)
 set -euo pipefail
 
 # Refuse to run from anywhere except the repo root. The templates
-# in npm/ are not a publishable package on their own; this script
-# is the only correct entry point and it expects ./npm and ./cmd/tape
-# as relative paths.
-if [ ! -f npm/main-package.json ] || [ ! -d cmd/tape ]; then
+# in npm/ are not a publishable package on their own — package.json
+# carries __VERSION__ / __PACKAGE__ placeholders.
+if [ ! -f npm/package.json ] || [ ! -d cmd/tape ]; then
   echo "error: run from the repo root (cwd: $(pwd))" >&2
-  echo "       expected ./npm/main-package.json and ./cmd/tape/" >&2
-  echo "       not from inside npm/ — there's no package.json there;" >&2
-  echo "       see npm/README.md for the why." >&2
+  echo "       expected ./npm/package.json and ./cmd/tape/" >&2
+  echo "       not from inside npm/ — see npm/README.md for the why." >&2
   exit 2
 fi
 
@@ -44,57 +52,36 @@ if [ "$TAG" = "beta" ] && [[ "$VERSION" != *-* ]]; then
   echo "warning: beta tag with a non-prerelease version ($VERSION); consider X.Y.Z-beta.N" >&2
 fi
 
-# platform key -> GOOS GOARCH npm-os npm-cpu
-PLATFORMS=(
-  "linux-x64    linux   amd64 linux  x64"
-  "linux-arm64  linux   arm64 linux  arm64"
-  "darwin-x64   darwin  amd64 darwin x64"
-  "darwin-arm64 darwin  arm64 darwin arm64"
-  "win32-x64    windows amd64 win32  x64"
-)
-
 rm -rf "$OUT"
-mkdir -p "$OUT"
+mkdir -p "$OUT/$PKG"
 
-echo "==> building $PKG@$VERSION (tag: $TAG)"
-for entry in "${PLATFORMS[@]}"; do
-  read -r key goos goarch npmos npmcpu <<<"$entry"
-  pkgdir="$OUT/$PKG-$key"
-  bin="tape"; [ "$goos" = "windows" ] && bin="tape.exe"
-
-  mkdir -p "$pkgdir/bin"
-  CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
-    -o "$pkgdir/bin/$bin" ./cmd/tape
-
-  sed -e "s|__PACKAGE__|$PKG|g" \
-      -e "s|__VERSION__|$VERSION|g" \
-      -e "s|__PLATFORM__|$key|g" \
-      -e "s|__OS__|$npmos|g" \
-      -e "s|__CPU__|$npmcpu|g" \
-      npm/platform-package.json > "$pkgdir/package.json"
-  echo "    built $PKG-$key"
-done
-
-# main package: launcher + manifest
-maindir="$OUT/$PKG"
-mkdir -p "$maindir"
+echo "==> rendering $PKG@$VERSION (tag: $TAG)"
 sed -e "s|__PACKAGE__|$PKG|g" -e "s|__VERSION__|$VERSION|g" \
-  npm/main-package.json > "$maindir/package.json"
-sed -e "s|^const PACKAGE_NAME = .*|const PACKAGE_NAME = \"$PKG\";|" \
-    -e "s|__VERSION__|$VERSION|g" \
-  npm/tape.js > "$maindir/tape.js"
-chmod +x "$maindir/tape.js"
-cp README.md "$maindir/README.md" 2>/dev/null || true
+  npm/package.json > "$OUT/$PKG/package.json"
+cp npm/install.js "$OUT/$PKG/install.js"
+cp npm/run.js     "$OUT/$PKG/run.js"
+cp README.md      "$OUT/$PKG/README.md" 2>/dev/null || true
+chmod +x "$OUT/$PKG/run.js" "$OUT/$PKG/install.js"
 
-echo "==> publishing platform packages"
-for entry in "${PLATFORMS[@]}"; do
-  read -r key _ <<<"$entry"
-  npm publish "$OUT/$PKG-$key" --tag "$TAG" --access public "${DRY_FLAG[@]}"
-done
+# Sanity: refuse to publish if the matching binary asset is missing
+# from the GitHub release. The postinstall download would 404 for
+# every user, so the npm package is useless. Gitee is checked too
+# but not required — install.js races, and as long as one mirror has
+# the asset, install works.
+if [ "${NPM_DRY_RUN:-}" != "1" ]; then
+  echo "==> verifying release assets are live"
+  probe="tape-linux-amd64"
+  gh_url="https://github.com/chenhg5/tape/releases/download/v${VERSION}/${probe}.sha256"
+  if ! curl -fsI -o /dev/null --max-time 5 "$gh_url"; then
+    echo "error: ${probe}.sha256 missing on GitHub v${VERSION}" >&2
+    echo "       run scripts/release-binaries.sh ${VERSION} and upload first." >&2
+    exit 3
+  fi
+  echo "    GitHub v${VERSION} assets OK"
+fi
 
-echo "==> publishing $PKG"
-npm publish "$maindir" --tag "$TAG" --access public "${DRY_FLAG[@]}"
+echo "==> publishing $PKG@$VERSION (tag: $TAG)"
+npm publish "$OUT/$PKG" --tag "$TAG" --access public "${DRY_FLAG[@]}"
 
 echo "done. install with:"
 if [ "$TAG" = "beta" ]; then
@@ -104,3 +91,7 @@ else
 fi
 echo "or pin a specific version:"
 echo "  npm install -g $PKG@$VERSION"
+echo
+echo "CN-friendly:"
+echo "  npm install -g $PKG --registry=https://registry.npmmirror.com"
+echo "  TAPE_MIRROR=gitee npm install -g $PKG       # force the postinstall mirror"

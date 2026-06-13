@@ -72,13 +72,14 @@ npm install -g @tapeai/tape@beta   # beta channel
 npm install -g @tapeai/tape --registry=https://registry.npmmirror.com
 ```
 
-The package ships per-platform sub-packages (`@tapeai/tape-linux-x64`,
-`...-darwin-arm64`, etc.). If `optionalDependencies` are skipped or the
-sub-package failed to fetch, the launcher transparently downloads the
-matching binary from the release mirror — GitHub raced against Gitee,
-fastest wins — verifies sha256, and caches it under `~/.tape/bin/` for
-subsequent runs. Pin a mirror with `TAPE_MIRROR=gitee` if you want to
-force the path.
+The npm package is a thin launcher (~15 KB). On install, the
+postinstall hook races GitHub vs Gitee, fetches the matching prebuilt
+binary (`tape-<os>-<arch>[.exe]`) from the release, verifies its
+sha256, and drops it in the package's `bin/`. If install-time network
+is blocked, the binary is fetched lazily on the first `tape ...`
+invocation instead — the install never fails just because the
+download did. Pin a mirror with `TAPE_MIRROR=gitee` to force the
+fast path for CN networks.
 
 With Go 1.26+:
 

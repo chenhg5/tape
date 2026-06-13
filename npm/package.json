@@ -19,20 +19,19 @@
     "url": "git+https://github.com/chenhg5/tape.git"
   },
   "license": "MIT",
+  "author": "chenhg5",
   "bin": {
-    "tape": "tape.js"
+    "tape": "run.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
   },
   "files": [
-    "tape.js"
+    "install.js",
+    "run.js",
+    "README.md"
   ],
   "engines": {
     "node": ">=18"
-  },
-  "optionalDependencies": {
-    "__PACKAGE__-linux-x64": "__VERSION__",
-    "__PACKAGE__-linux-arm64": "__VERSION__",
-    "__PACKAGE__-darwin-x64": "__VERSION__",
-    "__PACKAGE__-darwin-arm64": "__VERSION__",
-    "__PACKAGE__-win32-x64": "__VERSION__"
   }
 }

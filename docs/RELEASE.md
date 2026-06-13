@@ -70,13 +70,25 @@ strictly less work than a parallel file tree.
 
 | Script | Output | Audience |
 |--------|--------|----------|
-| `scripts/release-binaries.sh` | tarballs + sha256 in `dist/release/` | `install.sh`, `tape update` (manual install method), homebrew tap users |
-| `scripts/release-npm.sh` | 6 npm packages (1 main + 5 platform) | `npm install -g @tapeai/tape` users |
+| `scripts/release-binaries.sh` | raw binaries + tarballs + sha256 in `dist/release/` | `install.sh`, `tape update`, npm postinstall, homebrew tap |
+| `scripts/release-npm.sh` | 1 npm package (`@tapeai/tape`, ~15 KB) | `npm install -g @tapeai/tape` users |
 
-npm sub-packages already carry the prebuilt binary inside the
-package tarball; there's no second download. So npm publish does
-*not* depend on having the GitHub release assets up first — both
-paths can run in parallel, or in either order.
+The npm package itself ships only the launcher (`run.js`) and the
+postinstall script (`install.js`); it does **not** carry binaries.
+On `npm install`, the postinstall races GitHub vs Gitee, fetches
+the matching `tape-<os>-<arch>[.exe]` raw binary from the release,
+and verifies sha256.
+
+This means **release-npm.sh strictly depends on release-binaries.sh
+having run first** and the assets being live on GitHub. The npm
+script probes for `tape-linux-amd64.sha256` before publishing and
+refuses if it's missing — otherwise every CN/global user would get
+a 404 on postinstall. Always publish in this order:
+
+1. `scripts/release-binaries.sh <ver>` → produces `dist/release/`
+2. Upload to GitHub release (`gh release create ...`)
+3. Upload to Gitee release (API or web UI)
+4. `scripts/release-npm.sh <ver>` (will refuse early if step 2 didn't land)
 
 ## One-time setup
 
