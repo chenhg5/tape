@@ -159,6 +159,11 @@ func (a *Archive) List(ctx context.Context, f ports.Filter) ([]model.Summary, er
 		if !f.Since.IsZero() && m.Summary.UpdatedAt.Before(f.Since) {
 			return nil
 		}
+		if matchAnyAgent(m.Summary, f.ExcludeAgents) ||
+			matchAnyProject(m.Summary, f.ExcludeProjects) ||
+			matchAnyHost(m.Summary, f.ExcludeHosts) {
+			return nil
+		}
 		out = append(out, m.Summary)
 		return nil
 	})
@@ -228,6 +233,45 @@ func matchHost(s model.Summary, host string) bool {
 func matchProject(s model.Summary, q string) bool {
 	slug := model.ProjectSlug(q)
 	return strings.HasPrefix(s.Project, slug) || strings.Contains(s.CWD, q)
+}
+
+// matchAnyAgent reports whether s.Agent is in the exclude set; case-
+// sensitive because callers feed it canonical names from
+// agentid.Normalize. Empty set is a no-op so the typical zero-value
+// Filter still works.
+func matchAnyAgent(s model.Summary, names []string) bool {
+	for _, n := range names {
+		if n != "" && n == s.Agent {
+			return true
+		}
+	}
+	return false
+}
+
+// matchAnyProject reuses the same prefix-or-substring logic as the
+// positive matchProject so users get symmetric behavior — `--dir .`
+// and `--exclude-dir .` are exact opposites.
+func matchAnyProject(s model.Summary, projects []string) bool {
+	for _, p := range projects {
+		if p != "" && matchProject(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchAnyHost honors the same "local" sentinel as matchHost, so
+// `--exclude-host local` is the natural way to ask for "only remote".
+func matchAnyHost(s model.Summary, hosts []string) bool {
+	for _, h := range hosts {
+		if h == "" {
+			continue
+		}
+		if matchHost(s, h) {
+			return true
+		}
+	}
+	return false
 }
 
 // dirOf finds the session directory regardless of project slug.

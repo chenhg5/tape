@@ -5,12 +5,15 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/chenhg5/tape/internal/agentid"
 	"github.com/chenhg5/tape/internal/core/model"
@@ -33,10 +36,12 @@ func (a *App) archiveDir() string { return filepath.Join(a.home, "archive") }
 // consistent with "what was exported".
 func newExportCmd(app *App) *cobra.Command {
 	var (
-		output, agent, dir, since, host string
-		format, compress                string
-		splitBy, splitSize              string
-		noRedact, dryRun, scanOnly      bool
+		output, agent, dir, since, host          string
+		excludeAgent, excludeDir, excludeHost    []string
+		format, compress                         string
+		splitBy, splitSize                       string
+		jobs                                     int
+		noRedact, dryRun, scanOnly               bool
 	)
 	cmd := &cobra.Command{
 		Use:   "export [output]",
@@ -107,9 +112,16 @@ resulting files exactly where it left them.`,
 			if err != nil {
 				return err
 			}
+			excludedAgents, err := resolveExcludeAgents(excludeAgent)
+			if err != nil {
+				return err
+			}
 			filter := ports.Filter{
 				Agent: agentCanon, Project: resolveDirFilter(dir),
 				Host: host, Since: sinceTime,
+				ExcludeAgents:   excludedAgents,
+				ExcludeProjects: resolveExcludeDirs(excludeDir),
+				ExcludeHosts:    splitCSVAndTrim(excludeHost),
 			}
 
 			if scanOnly {
@@ -137,9 +149,16 @@ resulting files exactly where it left them.`,
 			}
 
 			if split.mode == splitNone {
+				// Single-stream export: spread the user's whole job
+				// budget across one zstd encoder. Zero (the default)
+				// = GOMAXPROCS, which is also klauspost/compress's
+				// own default — we still set it explicitly so
+				// `--jobs 1` works as "serial encoding" for
+				// reproducible bench runs.
+				opts.EncoderConcurrency = jobsToEncoderConcurrency(jobs, 1)
 				return runExportSingle(cmd, app, opts, output)
 			}
-			return runExportChunked(cmd, app, opts, output, split)
+			return runExportChunked(cmd, app, opts, output, split, jobs)
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path or chunk prefix (default: tape-export-<timestamp>.<ext>)")
@@ -148,13 +167,43 @@ resulting files exactly where it left them.`,
 	cmd.Flags().StringVar(&agent, "agent", "", "only export sessions from this agent — full name or 2-letter shorthand ("+agentid.HelpLine()+")")
 	cmd.Flags().StringVar(&dir, "dir", "", "only export sessions under this working dir ('.' = cwd)")
 	cmd.Flags().StringVar(&host, "host", "", `only export from this origin host ("local" or ssh-host)`)
+	cmd.Flags().StringArrayVar(&excludeAgent, "exclude-agent", nil, "exclude these agents (repeatable, or comma-separated)")
+	cmd.Flags().StringArrayVar(&excludeDir, "exclude-dir", nil, "exclude these project dirs (repeatable, or comma-separated)")
+	cmd.Flags().StringArrayVar(&excludeHost, "exclude-host", nil, `exclude these origin hosts ("local" = drop local-only; repeatable)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().StringVar(&splitBy, "split-by", "", "split into chunks: none (default), size, agent, month")
 	cmd.Flags().StringVar(&splitSize, "split-size", "256M", "chunk size budget when --split-by=size (K/M/G suffix accepted)")
+	cmd.Flags().IntVarP(&jobs, "jobs", "j", 0, "parallelism budget: chunks run concurrently and zstd uses the remainder per chunk; 0 = auto (CPU count)")
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "keep secrets verbatim in the artifact")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing (exit 10 on success)")
 	cmd.Flags().BoolVar(&scanOnly, "scan-only", false, "list secrets that would be redacted, write nothing")
 	return cmd
+}
+
+// jobsToEncoderConcurrency derives the per-stream zstd worker count
+// from the global --jobs budget and the number of chunk workers we
+// plan to spawn in parallel.
+//
+//	jobs = 0  → auto: GOMAXPROCS / parallelChunks
+//	jobs = N  → N / parallelChunks
+//
+// We always return at least 1 so zstd has someone to do the work.
+// Splitting the budget keeps total threads ≈ jobs even when chunks
+// run in parallel — over-subscription tanks throughput on archives
+// the size of $TAPE_HOME.
+func jobsToEncoderConcurrency(jobs, parallelChunks int) int {
+	if parallelChunks < 1 {
+		parallelChunks = 1
+	}
+	budget := jobs
+	if budget <= 0 {
+		budget = runtime.GOMAXPROCS(0)
+	}
+	per := budget / parallelChunks
+	if per < 1 {
+		per = 1
+	}
+	return per
 }
 
 // runExportSingle is the pre-chunking happy path: one Write call,
@@ -264,7 +313,7 @@ func parseSize(s string) (int64, error) {
 // share an output directory, and a serial loop gives a predictable
 // progress bar and easy ctrl-C semantics. If users ever need
 // throughput we can revisit.
-func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefix string, split splitSpec) error {
+func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefix string, split splitSpec, jobs int) error {
 	sums, err := app.Archive().List(cmd.Context(), opts.Filter)
 	if err != nil {
 		return err
@@ -285,66 +334,104 @@ func runExportChunked(cmd *cobra.Command, app *App, opts ports.ExportOpts, prefi
 		return ErrNoResults
 	}
 
-	type partResult struct {
-		Output  string `json:"output"`
-		Format  string `json:"format"`
-		Files   int    `json:"changed_files"`
-		Bytes   int64  `json:"bytes,omitempty"`
-		Chunk   string `json:"chunk"`
-		Note    string `json:"note,omitempty"`
+	// Worker count = min(--jobs, number of chunks). When --jobs is 0
+	// (default) we use GOMAXPROCS. Capping at len(chunks) avoids
+	// the silly case of "16 workers fighting for 3 files of work".
+	parallel := jobs
+	if parallel <= 0 {
+		parallel = runtime.GOMAXPROCS(0)
 	}
-	results := make([]partResult, 0, len(chunks))
-	for _, ch := range chunks {
-		path := insertSuffix(prefix, ch.suffix)
-		pb := app.newProgress("export "+ch.suffix, 0)
-		copy := opts
-		copy.Output = path
-		copy.KeepIDs = ch.ids
-		// drop Filter to avoid double-filtering; KeepIDs is the
-		// whitelist of record. Snapshot honors KeepIDs > Filter
-		// regardless, but clearing it documents intent.
-		copy.Filter = ports.Filter{}
-		copy.OnProgress = func(done, total int64, p string) {
-			if pb.total != total {
-				pb.SetTotal(total)
+	if parallel > len(chunks) {
+		parallel = len(chunks)
+	}
+	if parallel < 1 {
+		parallel = 1
+	}
+	// Split the encoding thread budget across the active chunk
+	// writers so the kernel never schedules N*N goroutines fighting
+	// for CPU. See jobsToEncoderConcurrency.
+	opts.EncoderConcurrency = jobsToEncoderConcurrency(jobs, parallel)
+
+	type partResult struct {
+		Output string `json:"output"`
+		Format string `json:"format"`
+		Files  int    `json:"changed_files"`
+		Bytes  int64  `json:"bytes,omitempty"`
+		Chunk  string `json:"chunk"`
+		Note   string `json:"note,omitempty"`
+	}
+	results := make([]partResult, len(chunks))
+
+	// Parallel writers share the archive (read-only) and write to
+	// distinct output paths, so the only contention is CPU + disk.
+	// We keep results[] indexed by chunk position so JSON output
+	// stays stable regardless of completion order.
+	//
+	// Progress output is chunk-granular here, not per-file: with N
+	// parallel writers a per-file bar would flicker between chunks
+	// and tell the user nothing. We print "[i/N] chunk done" lines
+	// behind a mutex instead, which is calm and informative on
+	// every terminal — including dumb / piped stderr.
+	var (
+		group, ctx = errgroup.WithContext(cmd.Context())
+		printMu    sync.Mutex
+		done       int
+	)
+	group.SetLimit(parallel)
+	for i, ch := range chunks {
+		i, ch := i, ch
+		group.Go(func() error {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			pb.Update(done, p)
-		}
-		res, err := snapshot.Write(cmd.Context(), app.Archive(), copy)
-		pb.Done("")
-		if err != nil {
-			return fmt.Errorf("chunk %s: %w", ch.suffix, err)
-		}
-		results = append(results, partResult{
-			Output: res.Output, Format: res.Format, Files: res.Changed,
-			Bytes: res.Bytes, Chunk: ch.suffix, Note: res.Note,
+			path := insertSuffix(prefix, ch.suffix)
+			copy := opts
+			copy.Output = path
+			copy.KeepIDs = ch.ids
+			copy.Filter = ports.Filter{}
+			copy.OnProgress = nil
+			res, err := snapshot.Write(ctx, app.Archive(), copy)
+			if err != nil {
+				return fmt.Errorf("chunk %s: %w", ch.suffix, err)
+			}
+			results[i] = partResult{
+				Output: res.Output, Format: res.Format, Files: res.Changed,
+				Bytes: res.Bytes, Chunk: ch.suffix, Note: res.Note,
+			}
+			if !app.useJSON() {
+				printMu.Lock()
+				done++
+				fmt.Fprintf(os.Stderr, "  %s [%d/%d] %s  %s\n",
+					app.green("✓"), done, len(chunks),
+					app.cyan(filepath.Base(res.Output)),
+					app.gray(humanSize(res.Bytes)))
+				printMu.Unlock()
+			}
+			return nil
 		})
+	}
+	if err := group.Wait(); err != nil {
+		return err
 	}
 
 	if app.useJSON() {
 		if err := emitJSON(map[string]any{
-			"split": map[string]any{"mode": string(split.mode), "size_budget": split.sizeBudget},
+			"split": map[string]any{
+				"mode": string(split.mode), "size_budget": split.sizeBudget,
+				"jobs": parallel, "encoder_concurrency": opts.EncoderConcurrency,
+			},
 			"parts": results, "count": len(results),
 		}); err != nil {
 			return err
 		}
 	} else {
-		app.lead()
 		var totalBytes int64
 		for _, r := range results {
-			fmt.Printf("  %s %s %s",
-				app.green("✓"),
-				app.cyan(r.Output),
-				app.bold(fmt.Sprintf("· %d file(s)", r.Files)))
-			if r.Bytes > 0 {
-				fmt.Printf("  %s", app.gray(humanSize(r.Bytes)))
-				totalBytes += r.Bytes
-			}
-			fmt.Println()
+			totalBytes += r.Bytes
 		}
-		if totalBytes > 0 && len(results) > 1 {
-			fmt.Printf("  %s %d chunk(s), %s total\n",
-				app.gray("Σ"), len(results), humanSize(totalBytes))
+		if len(results) > 1 {
+			fmt.Fprintf(os.Stderr, "  %s %d chunk(s), %s total · %d worker(s)\n",
+				app.gray("Σ"), len(results), humanSize(totalBytes), parallel)
 		}
 	}
 	if opts.DryRun {

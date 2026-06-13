@@ -132,6 +132,69 @@ func TestSearchFilters(t *testing.T) {
 	if n := count(ports.Query{Limit: 1}); n != 1 {
 		t.Errorf("limit: %d", n)
 	}
+
+	// Exclude axes: drop one agent / project / host. The exclude
+	// predicates layer in as NOT clauses, so single-axis exclusion
+	// is the inverse of single-axis positive selection.
+	if n := count(ports.Query{ExcludeAgents: []string{"codex"}}); n != 1 {
+		t.Errorf("exclude codex: %d", n)
+	}
+	if n := count(ports.Query{ExcludeProjects: []string{"/root/code/alpha"}}); n != 1 {
+		t.Errorf("exclude alpha: %d", n)
+	}
+	// Multi-value exclude: drop both → zero hits.
+	if n := count(ports.Query{ExcludeAgents: []string{"codex", "claude-code"}}); n != 0 {
+		t.Errorf("exclude both: %d", n)
+	}
+}
+
+// TestSearchExcludeHost: hosts use the same "local" sentinel as the
+// positive filter, so ExcludeHosts=["local"] returns only sessions
+// with a non-empty host. Needs its own setup because the shared
+// TestSearchFilters fixture has no host stamps.
+func TestSearchExcludeHost(t *testing.T) {
+	ix, err := Open(filepath.Join(t.TempDir(), "tape.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	ctx := context.Background()
+	put := func(id, agent, host string) {
+		s := &model.Session{
+			ID: agent + "/" + id, Agent: agent, SourceID: id,
+			StartedAt: time.Unix(1700000000, 0),
+			UpdatedAt: time.Unix(1700000000, 0),
+			Messages:  []model.Message{{ID: "m", Role: model.RoleUser, Text: "shared keyword payload", Timestamp: time.Unix(1700000000, 0)}},
+		}
+		if host != "" {
+			s.Meta = map[string]string{"host": host}
+		}
+		if err := ix.Upsert(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("loc", "codex", "")
+	put("a", "codex", "dev@host-a")
+	put("b", "codex", "ci@host-b")
+
+	count := func(q ports.Query) int {
+		q.Text = "payload"
+		hits, err := ix.Search(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(hits)
+	}
+
+	if n := count(ports.Query{ExcludeHosts: []string{"local"}}); n != 2 {
+		t.Errorf(`exclude "local": %d, want 2 (remote-only)`, n)
+	}
+	if n := count(ports.Query{ExcludeHosts: []string{"dev@host-a"}}); n != 2 {
+		t.Errorf(`exclude host-a: %d, want 2`, n)
+	}
+	if n := count(ports.Query{ExcludeHosts: []string{"dev@host-a", "ci@host-b"}}); n != 1 {
+		t.Errorf(`exclude both remotes: %d, want 1 (just local)`, n)
+	}
 }
 
 func TestSearchToolCallNamesAreIndexed(t *testing.T) {

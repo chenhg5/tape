@@ -114,10 +114,13 @@ S3/git/Drive is the caller's job, by design:
 tape export                                    # tape-export-<ts>.tar.zst in cwd
 tape export snapshot.tar.gz --compress gzip    # explicit name + codec
 tape export --agent codex --since 7d           # filter-scoped slice
+tape export --exclude-agent cursor,opencode    # everything except those two
+tape export --exclude-host local               # only remote-mirrored sessions
 tape export --dir . --format zip --compress none  # current project as a .zip
 tape export --split-by agent                   # one file per agent
 tape export --split-by month --since 1y        # one file per calendar month
 tape export --split-by size --split-size 200M  # 200 MiB buckets
+tape export --split-by agent --jobs 4          # 4 chunks at a time
 tape export --scan-only                        # audit secrets, write nothing
 ```
 
@@ -127,6 +130,23 @@ For large archives use `--split-by none|size|agent|month` to fan out;
 the chunk discriminator (agent name / `YYYY-MM` / `part-001` …) is
 inserted before the extension and every chunk is listed under `parts[]`
 in the JSON envelope.
+
+`--jobs N` controls parallelism for chunked exports: chunks run
+concurrently (capped at `min(N, chunk-count)`) and the remaining
+budget feeds each chunk's zstd encoder, so total threads stay ≈ N.
+`--jobs 0` (default) is `GOMAXPROCS`; `--jobs 1` is the
+reproducible single-thread baseline. JSON output adds
+`split.jobs` + `split.encoder_concurrency` so agents can verify the
+actual run shape.
+
+Every filter flag has an `--exclude-*` counterpart on `ls` / `search`
+/ `export`: `--exclude-agent`, `--exclude-dir`, `--exclude-host`.
+Each is repeatable (`--exclude-agent cc --exclude-agent oc`) or
+comma-separated (`--exclude-agent cc,oc`); the same agent-name
+normalization (canonical + shorthand + did-you-mean) applies.
+`--exclude-host local` is the natural "remote-only" idiom; positive
+and negative on the same axis layer as AND-NOT
+(`--agent codex --exclude-dir /tmp`).
 Secrets in `session.json` are redacted in stream
 (`[REDACTED:<rule>]` for text, length-preserving masks for binaries);
 pass `--no-redact` for verbatim bytes. `--scan-only` is exit 0 even when

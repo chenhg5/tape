@@ -163,6 +163,7 @@ func caseInsensitiveReplace(s, old, replacement string) string {
 
 func newSearchCmd(app *App) *cobra.Command {
 	var agent, dir, since, sort, host string
+	var excludeAgent, excludeDir, excludeHost []string
 	var limit, page int
 	var printOnly bool
 	cmd := &cobra.Command{
@@ -217,17 +218,26 @@ the most useful match is usually "the conversation I just had". Switch to
 				return usageErrf("--sort must be 'recent' or 'relevance'")
 			}
 			dir = resolveDirFilter(dir)
+			excludedAgents, err := resolveExcludeAgents(excludeAgent)
+			if err != nil {
+				return err
+			}
+			excludedDirs := resolveExcludeDirs(excludeDir)
+			excludedHosts := splitCSVAndTrim(excludeHost)
 			// over-fetch by one to detect "has more" without a separate count
 			// query (FTS COUNT(*) over the same MATCH would be expensive).
 			hits, err := ix.Search(cmd.Context(), ports.Query{
-				Text:    strings.Join(args, " "),
-				Agent:   agentCanon,
-				Project: dir,
-				Host:    host,
-				Since:   t,
-				Sort:    sort,
-				Limit:   limit + 1,
-				Offset:  (page - 1) * limit,
+				Text:            strings.Join(args, " "),
+				Agent:           agentCanon,
+				Project:         dir,
+				Host:            host,
+				Since:           t,
+				Sort:            sort,
+				Limit:           limit + 1,
+				Offset:          (page - 1) * limit,
+				ExcludeAgents:   excludedAgents,
+				ExcludeProjects: excludedDirs,
+				ExcludeHosts:    excludedHosts,
 			})
 			if err != nil {
 				return err
@@ -268,6 +278,9 @@ the most useful match is usually "the conversation I just had". Switch to
 	cmd.Flags().StringVar(&agent, "agent", "", "filter by agent — full name or 2-letter shorthand ("+agentid.HelpLine()+")")
 	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
 	cmd.Flags().StringVar(&host, "host", "", `filter by origin host ("local" or ssh-host)`)
+	cmd.Flags().StringArrayVar(&excludeAgent, "exclude-agent", nil, "exclude these agents (repeatable, or comma-separated)")
+	cmd.Flags().StringArrayVar(&excludeDir, "exclude-dir", nil, "exclude these project dirs (repeatable, or comma-separated)")
+	cmd.Flags().StringArrayVar(&excludeHost, "exclude-host", nil, `exclude these origin hosts ("local" = drop local-only; repeatable)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
 	cmd.Flags().StringVar(&sort, "sort", "recent", "result order: 'recent' (newest session first) or 'relevance' (BM25)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")

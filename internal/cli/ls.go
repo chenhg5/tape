@@ -57,6 +57,64 @@ func resolveAgentFilter(raw string) (string, error) {
 	return "", usageErrf("unknown agent %q%s\n  known: %s", raw, hint, agentid.HelpLine())
 }
 
+// splitCSVAndTrim accepts the StringArray values cobra hands us and
+// flattens both axes — repeated flags (`--exclude-agent cc
+// --exclude-agent oc`) and comma-separated values (`--exclude-agent
+// cc,oc`) — into one slice. Empty fragments are dropped. The CSV
+// half is what users reach for first; the repeat half is for cases
+// where commas are unsafe (shell expansion, completions).
+func splitCSVAndTrim(raw []string) []string {
+	var out []string
+	for _, item := range raw {
+		for _, part := range strings.Split(item, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+// resolveExcludeAgents normalizes a list of user-typed agent names
+// (shorthands, aliases, wonky casing) into canonical Source.Name()
+// strings. Same suggester-on-typo behavior as resolveAgentFilter so
+// the error path is consistent across positive and negative flags.
+// The returned slice is de-duplicated to keep downstream SQL/loops
+// tidy.
+func resolveExcludeAgents(raw []string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range splitCSVAndTrim(raw) {
+		canon, ok := agentid.Normalize(item)
+		if !ok {
+			hint := ""
+			if guesses := agentid.Suggest(item, 3); len(guesses) > 0 {
+				hint = " — did you mean " + strings.Join(guesses, ", ") + "?"
+			}
+			return nil, usageErrf("unknown agent %q%s\n  known: %s", item, hint, agentid.HelpLine())
+		}
+		if !seen[canon] {
+			seen[canon] = true
+			out = append(out, canon)
+		}
+	}
+	return out, nil
+}
+
+// resolveExcludeDirs runs every entry through resolveDirFilter so
+// relative paths and "." get the same absolute-path treatment as
+// --dir. We don't reject anything here — resolveDirFilter handles
+// the validation and just returns the raw string when normalization
+// fails — but we do drop empties from CSV splits.
+func resolveExcludeDirs(raw []string) []string {
+	var out []string
+	for _, item := range splitCSVAndTrim(raw) {
+		out = append(out, resolveDirFilter(item))
+	}
+	return out
+}
+
 // renderSessionList prints sessions in a tight, colored table with
 // rune-aware column widths. Columns: id · agent · updated · msgs · title.
 // Project is shown as a subtle prefix on the title when it differs from
@@ -110,6 +168,7 @@ func renderSessionList(app *App, sums []model.Summary, page, pageSize, total int
 
 func newLsCmd(app *App) *cobra.Command {
 	var agent, dir, since, host string
+	var excludeAgent, excludeDir, excludeHost []string
 	var limit, page int
 	var printOnly bool
 	cmd := &cobra.Command{
@@ -156,6 +215,12 @@ ignores --page; for deep browsing combine --print with --page.`,
 				return err
 			}
 			dir = resolveDirFilter(dir)
+			excludedAgents, err := resolveExcludeAgents(excludeAgent)
+			if err != nil {
+				return err
+			}
+			excludedDirs := resolveExcludeDirs(excludeDir)
+			excludedHosts := splitCSVAndTrim(excludeHost)
 			// Interactive path: TTY, no --json, no --print, no
 			// explicit pagination. The picker uses a single page of
 			// `limit` items (defaults to 30 — see below); pagination is
@@ -167,11 +232,13 @@ ignores --page; for deep browsing combine --print with --page.`,
 				}
 				return runInteractiveLs(cmd.Context(), app, ports.Filter{
 					Agent: agentCanon, Project: dir, Host: host, Since: sinceTime, Limit: pickerLimit,
+					ExcludeAgents: excludedAgents, ExcludeProjects: excludedDirs, ExcludeHosts: excludedHosts,
 				})
 			}
 			filter := ports.Filter{
 				Agent: agentCanon, Project: dir, Host: host, Since: sinceTime,
 				Limit: limit, Offset: (page - 1) * limit,
+				ExcludeAgents: excludedAgents, ExcludeProjects: excludedDirs, ExcludeHosts: excludedHosts,
 			}
 			sums, err := app.Archive().List(cmd.Context(), filter)
 			if err != nil {
@@ -208,6 +275,9 @@ ignores --page; for deep browsing combine --print with --page.`,
 	cmd.Flags().StringVar(&dir, "dir", "", "filter by project directory ('.' = current dir)")
 	cmd.Flags().StringVar(&host, "host", "", `filter by origin host ("local" = this machine, or ssh-host)`)
 	cmd.Flags().StringVar(&since, "since", "", "only sessions updated since (24h, 7d, 2026-01-31)")
+	cmd.Flags().StringArrayVar(&excludeAgent, "exclude-agent", nil, "exclude these agents (repeatable, or comma-separated)")
+	cmd.Flags().StringArrayVar(&excludeDir, "exclude-dir", nil, "exclude these project dirs (repeatable, or comma-separated)")
+	cmd.Flags().StringArrayVar(&excludeHost, "exclude-host", nil, `exclude these origin hosts ("local" = drop local-only; repeatable)`)
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")
 	cmd.Flags().IntVar(&page, "page", 1, "page number (1-based)")
 	cmd.Flags().BoolVar(&printOnly, "print", false, "skip the interactive picker, just print the table")

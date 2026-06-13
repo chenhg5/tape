@@ -205,7 +205,18 @@ func writeArchive(ctx context.Context, out io.Writer, format, compress string,
 	var compressed io.WriteCloser
 	switch compress {
 	case CompressZstd, "":
-		zw, err := zstd.NewWriter(out)
+		// EncoderConcurrency = 0 lets klauspost/compress pick its
+		// own default (GOMAXPROCS); the CLI passes a smaller value
+		// when chunks run in parallel so the OS doesn't end up
+		// scheduling NCPU * Nchunks goroutines fighting for the
+		// same cores. zstd.WithEncoderConcurrency requires >= 1;
+		// guard the 0 case so passing an explicit zero stays
+		// equivalent to "no opinion".
+		var zopts []zstd.EOption
+		if opts.EncoderConcurrency > 0 {
+			zopts = append(zopts, zstd.WithEncoderConcurrency(opts.EncoderConcurrency))
+		}
+		zw, err := zstd.NewWriter(out, zopts...)
 		if err != nil {
 			return 0, err
 		}

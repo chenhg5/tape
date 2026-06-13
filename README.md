@@ -120,12 +120,12 @@ Run `tape sync --full` after a tape upgrade if you want to backfill new IR field
 | Command | What it does |
 |---|---|
 | `tape sync` | Archive new/changed sessions from all agents (`--remote user@host` for SSH machines; `--full` to re-archive everything after a parser bump; `--install [--interval 1h]` to register a periodic sync job) |
-| `tape ls` | Browse archived sessions (interactive picker on a TTY; `--print` for plain table; filters `--agent`, `--dir .`, `--host local\|<ssh>`, `--since 7d`) |
-| `tape search <query>` | Full-text search across everything (interactive picker on a TTY; `--print` for plain list; same `--host` filter) |
+| `tape ls` | Browse archived sessions (interactive picker on a TTY; `--print` for plain table; filters `--agent`, `--dir .`, `--host local\|<ssh>`, `--since 7d`; reverse with `--exclude-agent`, `--exclude-dir`, `--exclude-host`) |
+| `tape search <query>` | Full-text search across everything (interactive picker on a TTY; `--print` for plain list; same `--host` / `--exclude-*` filters) |
 | `tape show <id>` | Replay a session (`--full` includes tool output) |
 | `tape overview` | Dashboard: agents, activity sparkline, top projects, recent sessions |
 | `tape restore <id> --to <agent>` | Continue a session in another agent |
-| `tape export [output]` | Snapshot the archive to one file or a fan-out of chunks (`--format tar\|zip`, `--compress zstd\|gzip\|xz\|none`, `--split-by none\|size\|agent\|month`, filters: `--agent`, `--dir`, `--host`, `--since`, `--scan-only` for an audit-only run) |
+| `tape export [output]` | Snapshot the archive to one file or a fan-out of chunks (`--format tar\|zip`, `--compress zstd\|gzip\|xz\|none`, `--split-by none\|size\|agent\|month`, `--jobs N` for parallel writers, positive + reverse filters `--agent`/`--dir`/`--host`/`--exclude-agent`/`--exclude-dir`/`--exclude-host`, `--since`, `--scan-only` for an audit-only run) |
 | `tape version` | Print version, git commit, build date, Go toolchain, platform and detected install method (`--json` for scripts) |
 | `tape update` | Check for and (default) install a newer release. Auto-picks the right installer for how tape was installed (`npm` / `go install` / manual). `--check` reports only; `--channel beta` includes prereleases |
 | `tape schema [command]` | Introspect the CLI as JSON (for agents) |
@@ -177,16 +177,23 @@ Two strategies, chosen automatically:
 tape export                                          # everything → tape-export-<ts>.tar.zst
 tape export snapshot.tar.gz --compress gzip          # explicit name + codec
 tape export --agent codex --since 7d                 # just codex, last week
+tape export --exclude-agent cursor,opencode          # everything except those two
+tape export --exclude-host local                     # only remote-mirrored sessions
 tape export --dir . --format zip --compress none     # current project as a .zip
 tape export --split-by agent                         # one file per agent
 tape export --split-by month --since 1y              # monthly chunks for the year
 tape export --split-by size --split-size 200M        # 200 MiB buckets, sessions never split
+tape export --split-by agent --jobs 4                # 4 chunks at a time, threads divided
 tape export --scan-only --agent claude-code          # audit secrets without writing
 ```
 
 `tape export` walks the archive (optionally filtered with the same flags ls/search use) and writes one file — or a set of chunks. Pick the container with `--format tar|zip` and the codec with `--compress zstd|gzip|xz|none`; defaults are `tar` + `zstd`, the smallest and fastest combo. Output goes to `tape-export-<UTC-timestamp>.<ext>` in the current directory when you don't pass `-o`.
 
 For very large archives use `--split-by` to fan out into multiple files instead of one giant one — `agent` (one file per agent), `month` (calendar months of session updated-at), or `size` (greedy buckets honoring `--split-size`, default 256 MiB; sessions are never split across chunks). The chunk suffix is inserted before the extension: `tape-export-<ts>.codex.tar.zst`, `tape-export-<ts>.part-001.tar.zst`, etc.
+
+`--jobs N` controls parallelism: chunks run concurrently (up to `min(N, chunk-count)`) and the leftover thread budget feeds each chunk's zstd encoder, so total threads stay around `N` instead of `N²`. `--jobs 0` (the default) uses `GOMAXPROCS`; `--jobs 1` is a reproducible single-thread baseline. Even a single-file export benefits — zstd is already multi-threaded by default, this flag just lets you cap it.
+
+Every filter flag has an `--exclude-*` counterpart: `--exclude-agent`, `--exclude-dir`, `--exclude-host`. Each is repeatable (or comma-separated) and accepts the same shorthands as the positive flag. The common idiom "everything except *that one agent*" is `tape export --exclude-agent cursor`; "remote machines only" is `tape ls --exclude-host local`. The reverse filters are layered AND-NOT, so you can combine positive + negative: `tape search "auth" --agent codex --exclude-dir /tmp` means "codex sessions matching auth, but not the throwaway ones".
 
 What happens to the file is your choice — tape doesn't ship a "push to S3/git/Drive" command. Any tar / zip is trivially extractable with system tools and uploadable with whatever tool you already use; we'd rather get out of the way than reinvent rclone.
 

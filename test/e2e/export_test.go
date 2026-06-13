@@ -246,6 +246,105 @@ func TestExportSplitBySize(t *testing.T) {
 	}
 }
 
+// TestExportExcludeAgent: --exclude-agent drops the named agent
+// from the artifact. We verify two things — the file list returned
+// in JSON doesn't include the excluded agent's session paths, and
+// the on-disk archive listed via `tape ls --exclude-agent` is
+// symmetric.
+func TestExportExcludeAgent(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	e.seedAllAgents()
+	e.mustRun(0, "sync")
+
+	// Baseline: every agent shows up in `ls`.
+	baseline := e.mustRun(0, "ls", "--print", "--limit", "200").data(t)
+	allCount := int(baseline["count"].(float64))
+	if allCount < 2 {
+		t.Skipf("need >= 2 agents to test exclusion; got %d", allCount)
+	}
+
+	// Exclude codex (canonical) and cursor (shorthand "cu").
+	out := e.mustRun(0, "ls", "--print", "--limit", "200",
+		"--exclude-agent", "codex", "--exclude-agent", "cu").data(t)
+	sessions := out["sessions"].([]any)
+	for _, raw := range sessions {
+		s := raw.(map[string]any)
+		if a := s["agent"].(string); a == "codex" || a == "cursor" {
+			t.Errorf("excluded agent leaked: %s", a)
+		}
+	}
+	if len(sessions) >= allCount {
+		t.Errorf("exclusion didn't shrink list: %d >= %d", len(sessions), allCount)
+	}
+
+	// Same flag plumbed through export: same effect on the parts
+	// listing. We don't unpack the archive — the agent's path
+	// shouldn't appear in the JSON-reported written set.
+	dir := t.TempDir()
+	out2 := e.mustRun(0, "export", "-o",
+		filepath.Join(dir, "out.tar.zst"),
+		"--split-by", "agent", "--exclude-agent", "codex").data(t)
+	parts := out2["parts"].([]any)
+	for _, raw := range parts {
+		p := raw.(map[string]any)
+		if p["chunk"].(string) == "codex" {
+			t.Errorf("export --exclude-agent leaked codex chunk: %+v", p)
+		}
+	}
+}
+
+// TestExportExcludeAgentTypoSuggests: misspelled --exclude-agent
+// gets a usage error with the did-you-mean hint, same as --agent.
+func TestExportExcludeAgentTypoSuggests(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	r := e.run("export", "--exclude-agent", "clude-code")
+	if r.code != 2 {
+		t.Errorf("typo exit = %d, want 2", r.code)
+	}
+	if !strings.Contains(r.stderr, "did you mean") {
+		t.Errorf("typo error must hint: %s", r.stderr)
+	}
+}
+
+// TestExportJobsControlsParallelism: --jobs N is echoed in the
+// chunked JSON envelope (split.jobs + split.encoder_concurrency).
+// The actual concurrency is hard to observe from the outside, so
+// we pin the metadata contract instead.
+func TestExportJobsControlsParallelism(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	e.seedAllAgents()
+	e.mustRun(0, "sync")
+
+	dir := t.TempDir()
+	prefix := filepath.Join(dir, "snap.tar.zst")
+	out := e.mustRun(0, "export", "-o", prefix,
+		"--split-by", "agent", "--jobs", "2").data(t)
+	split := out["split"].(map[string]any)
+	if jobs := int(split["jobs"].(float64)); jobs != 2 && jobs != 1 {
+		// jobs may be capped to len(chunks); single-agent fixtures
+		// would yield 1 worker. Both are correct.
+		t.Errorf("split.jobs = %d, want 1 or 2", jobs)
+	}
+	if enc := int(split["encoder_concurrency"].(float64)); enc < 1 {
+		t.Errorf("encoder_concurrency = %d, want >= 1", enc)
+	}
+	for _, raw := range out["parts"].([]any) {
+		p := raw.(map[string]any)
+		if _, err := os.Stat(p["output"].(string)); err != nil {
+			t.Errorf("chunk file missing under parallel run: %v", err)
+		}
+	}
+}
+
 // TestExportSplitUsageErrors: bad --split-by, bad --split-size,
 // both surface as usage errors (exit 2) before any walking.
 func TestExportSplitUsageErrors(t *testing.T) {

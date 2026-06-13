@@ -176,6 +176,81 @@ func TestListHostFilter(t *testing.T) {
 	}
 }
 
+// TestListExcludeFilters: negative filters are applied *after* the
+// positive matches, so a query with only Exclude* set returns
+// "everything but those". Mixing positive + exclude on the same
+// dimension is allowed and behaves like (positive AND NOT exclude).
+func TestListExcludeFilters(t *testing.T) {
+	a := New(t.TempDir())
+	ctx := context.Background()
+	src := t.TempDir()
+	put := func(agent, id, cwd, host string) {
+		f := writeSourceFile(t, src, id+".jsonl", id)
+		ref := ports.SessionRef{Agent: agent, SourceID: id, Files: []string{f}}
+		_, sum, _ := a.Stale(ref)
+		s := demoSession(agent, id, cwd, 1)
+		if host != "" {
+			s.Meta = map[string]string{"host": host}
+		}
+		if err := a.Put(ctx, s, ref, sum); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("codex", "x1", "/root/code/alpha", "")
+	put("codex", "x2", "/root/code/beta", "")
+	put("claude-code", "y1", "/root/code/alpha", "")
+	put("cursor", "z1", "/root/code/gamma", "dev@host-a")
+	put("cursor", "z2", "/root/code/gamma", "ci@host-b")
+
+	// Exclude one agent: every session except codex's.
+	noCodex, _ := a.List(ctx, ports.Filter{ExcludeAgents: []string{"codex"}})
+	if len(noCodex) != 3 {
+		t.Errorf("exclude codex: %d, want 3", len(noCodex))
+	}
+	for _, s := range noCodex {
+		if s.Agent == "codex" {
+			t.Errorf("exclude leaked codex: %+v", s)
+		}
+	}
+
+	// Exclude multiple agents at once.
+	onlyCursor, _ := a.List(ctx, ports.Filter{ExcludeAgents: []string{"codex", "claude-code"}})
+	if len(onlyCursor) != 2 {
+		t.Errorf("exclude codex+claude: %d, want 2", len(onlyCursor))
+	}
+
+	// Exclude a project dir: alpha sessions must drop, regardless of agent.
+	noAlpha, _ := a.List(ctx, ports.Filter{ExcludeProjects: []string{"/root/code/alpha"}})
+	if len(noAlpha) != 3 {
+		t.Errorf("exclude alpha: %d, want 3", len(noAlpha))
+	}
+
+	// Exclude a host: keep local + the other remote.
+	noHostA, _ := a.List(ctx, ports.Filter{ExcludeHosts: []string{"dev@host-a"}})
+	if len(noHostA) != 4 {
+		t.Errorf("exclude dev@host-a: %d, want 4", len(noHostA))
+	}
+
+	// Exclude "local": only the two remote sessions remain — the
+	// natural "remote-only" idiom.
+	remoteOnly, _ := a.List(ctx, ports.Filter{ExcludeHosts: []string{"local"}})
+	if len(remoteOnly) != 2 {
+		t.Fatalf("exclude local: %d, want 2", len(remoteOnly))
+	}
+	for _, s := range remoteOnly {
+		if s.Host == "" {
+			t.Errorf("exclude local leaked local: %+v", s)
+		}
+	}
+
+	// Positive AND negative on the same axis: codex minus the alpha
+	// session = just /root/code/beta.
+	codexNoAlpha, _ := a.List(ctx, ports.Filter{Agent: "codex", ExcludeProjects: []string{"/root/code/alpha"}})
+	if len(codexNoAlpha) != 1 || codexNoAlpha[0].ID != "codex/x2" {
+		t.Errorf("codex minus alpha: %+v", codexNoAlpha)
+	}
+}
+
 func TestListEmptyArchive(t *testing.T) {
 	a := New(filepath.Join(t.TempDir(), "does-not-exist-yet"))
 	out, err := a.List(context.Background(), ports.Filter{})

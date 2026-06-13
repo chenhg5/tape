@@ -250,6 +250,38 @@ func (ix *Index) Search(ctx context.Context, q ports.Query) ([]ports.Hit, error)
 		where += ` AND s.updated_at >= ?`
 		args = append(args, q.Since.UnixMilli())
 	}
+	// Exclude*: negative filters appended as "NOT IN (...)" lists so
+	// the planner uses the same indexes as the positive matches. We
+	// build placeholders inline because parameter binding doesn't
+	// expand variadic lists. Empty slices contribute nothing.
+	for _, ex := range q.ExcludeAgents {
+		if ex == "" {
+			continue
+		}
+		where += ` AND s.agent <> ?`
+		args = append(args, ex)
+	}
+	for _, ex := range q.ExcludeProjects {
+		if ex == "" {
+			continue
+		}
+		// Same shape as the positive project predicate; negate the
+		// whole disjunction with a NOT() so prefix-or-substring
+		// semantics stay symmetric.
+		where += ` AND NOT (s.project LIKE ? OR instr(s.cwd, ?) > 0)`
+		args = append(args, model.ProjectSlug(ex)+"%", ex)
+	}
+	for _, ex := range q.ExcludeHosts {
+		switch ex {
+		case "":
+			// no-op
+		case "local":
+			where += ` AND COALESCE(s.host,'') <> ''`
+		default:
+			where += ` AND COALESCE(s.host,'') <> ?`
+			args = append(args, ex)
+		}
+	}
 
 	var sqlq string
 	switch q.Sort {

@@ -40,10 +40,26 @@ type Filter struct {
 	// Host scopes results to sessions mirrored from a particular SSH
 	// host. The sentinel "local" matches only sessions parsed off this
 	// machine (Summary.Host == ""). Empty string means "no host filter".
-	Host   string
-	Since  time.Time
-	Limit  int
-	Offset int
+	Host string
+	// Exclude* are negative filters applied *after* the positive
+	// match. Semantically: a session must pass every positive filter
+	// AND match none of the negatives. Empty slices are no-ops.
+	//
+	// Positive filters stay single-valued on purpose ("I want this
+	// one slice of the archive"); exclusion is the natural slice
+	// because the common phrasing is "everything except X, Y, Z" —
+	// twelve agents, sometimes you really do want all-but-one.
+	//
+	// Agent names should be canonical (post-agentid.Normalize); the
+	// archive doesn't case-fold here. Hosts honor the same "local"
+	// sentinel as Host: ExcludeHosts=["local"] hides every locally-
+	// parsed session and leaves only remote-mirrored ones.
+	ExcludeAgents   []string
+	ExcludeProjects []string
+	ExcludeHosts    []string
+	Since           time.Time
+	Limit           int
+	Offset          int
 }
 
 // Archive is the durable session store: byte-for-byte raw copies plus the
@@ -64,10 +80,18 @@ type Query struct {
 	Project string
 	// Host follows the same sentinel rules as Filter.Host: "" means
 	// no scope, "local" means Host == "", anything else is an exact match.
-	Host    string
-	Since   time.Time
-	Limit   int
-	Offset  int
+	Host string
+	// Exclude* mirror Filter.Exclude* and follow the same rules:
+	// applied after positive matches, empty = no-op, hosts honor the
+	// "local" sentinel. Kept separate from Agent/Project/Host so
+	// callers can combine "this one slice" with "minus those" in
+	// the same query.
+	ExcludeAgents   []string
+	ExcludeProjects []string
+	ExcludeHosts    []string
+	Since           time.Time
+	Limit           int
+	Offset          int
 	// Sort selects the order of results:
 	//   "" / "recent"   — newest session first, in-session by message ts ASC
 	//   "relevance"     — BM25 across all messages (long sessions win)
@@ -125,7 +149,14 @@ type ExportOpts struct {
 	KeepIDs    []string // canonical "<agent>/<source-id>" form
 	Format     string   // "tar" or "zip"
 	Compress   string   // "zstd" | "gzip" | "xz" | "none"; only meaningful for tar
-	DryRun     bool
+	// EncoderConcurrency caps the number of goroutines the zstd
+	// encoder may spawn for a single artifact. 0 (the default) lets
+	// the encoder pick GOMAXPROCS; CLI sets it explicitly when
+	// running chunked exports in parallel so total threads stay
+	// bounded. Ignored for non-zstd codecs (gzip is single-stream,
+	// xz/none are stdlib).
+	EncoderConcurrency int
+	DryRun             bool
 	// RedactCopy, when non-nil, transforms file contents on the way
 	// into the artifact. Local archive files are never modified.
 	RedactCopy func(path string, data []byte) []byte

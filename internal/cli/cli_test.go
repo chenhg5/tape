@@ -369,6 +369,91 @@ func TestDetectInstall(t *testing.T) {
 	}
 }
 
+// TestSplitCSVAndTrim covers the two-axis flattening: cobra
+// StringArray pre-aggregates repeated flags, but users also
+// reach for `a,b,c`. Both paths converge on the same flat slice,
+// empty fragments are dropped, whitespace is trimmed.
+func TestSplitCSVAndTrim(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want []string
+	}{
+		{nil, nil},
+		{[]string{""}, nil},
+		{[]string{"a"}, []string{"a"}},
+		{[]string{"a", "b"}, []string{"a", "b"}},
+		{[]string{"a,b"}, []string{"a", "b"}},
+		{[]string{"a, b,  c"}, []string{"a", "b", "c"}},
+		{[]string{"a,b", "c"}, []string{"a", "b", "c"}},
+		{[]string{",,a,,b,,"}, []string{"a", "b"}},
+	}
+	for _, c := range cases {
+		got := splitCSVAndTrim(c.in)
+		if !equalStringSlice(got, c.want) {
+			t.Errorf("splitCSVAndTrim(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestResolveExcludeAgentsNormalizesAndDedupes: users mix shorthand
+// and canonical names; the resolver should fold them to the
+// canonical form (de-duplicated, order-preserving). Unknown names
+// surface as usage errors with the same did-you-mean shape as the
+// positive --agent flag.
+func TestResolveExcludeAgentsNormalizesAndDedupes(t *testing.T) {
+	got, err := resolveExcludeAgents([]string{"cc,codex", "claude-code", "OC"})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	want := []string{"claude-code", "codex", "opencode"}
+	if !equalStringSlice(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
+	if _, err := resolveExcludeAgents([]string{"clude-code"}); err == nil {
+		t.Fatal("typo must error")
+	} else if !strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("error must include did-you-mean: %v", err)
+	}
+}
+
+// TestJobsToEncoderConcurrency: the budget divides cleanly across
+// chunk workers, never falls below 1, and 0 (auto) is the same as
+// GOMAXPROCS. We don't pin the exact GOMAXPROCS-derived value (CI
+// varies) but assert the inversion property: bigger parallelism →
+// smaller per-encoder concurrency.
+func TestJobsToEncoderConcurrency(t *testing.T) {
+	if got := jobsToEncoderConcurrency(8, 4); got != 2 {
+		t.Errorf("8/4: got %d, want 2", got)
+	}
+	if got := jobsToEncoderConcurrency(4, 8); got != 1 {
+		t.Errorf("4/8: got %d, want 1 (floor)", got)
+	}
+	if got := jobsToEncoderConcurrency(1, 1); got != 1 {
+		t.Errorf("1/1: got %d, want 1", got)
+	}
+	// Explicit 1 worker = "serial encoding"; budget passes through.
+	if got := jobsToEncoderConcurrency(6, 1); got != 6 {
+		t.Errorf("6/1: got %d, want 6", got)
+	}
+	// Auto (0) === GOMAXPROCS, so a 1-chunk run gets the full budget.
+	if got := jobsToEncoderConcurrency(0, 1); got < 1 {
+		t.Errorf("0/1: got %d, want >=1", got)
+	}
+}
+
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestResolveAgentFilter exercises the wrapper that every command
 // using --agent / --to funnels through. Canonical/shortcode/alias
 // each resolve, the empty string passes through (= no filter), and
