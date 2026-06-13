@@ -42,7 +42,7 @@ Resume it with:
 - **All your machines** — `tape sync --remote user@host` pulls sessions from dev servers over plain SSH; nothing to install on the remote side.
 - **Search everything** — full-text search across all agents with BM25 ranking. CJK works: latin words *and* Chinese/Japanese/Korean bigrams are tokenized natively.
 - **Move between agents** — ran out of Claude tokens mid-task? `tape restore --to codex` rewrites the dialogue as a *native* session the target agent can `resume`.
-- **Back up safely** — `backup push` turns the archive into a git repo; a built-in secret scanner blocks pushes containing API keys. `backup export` produces a redacted `.tar.zst`.
+- **Export, don't lock in** — `tape export` ships the archive (or any filtered slice) as a single artifact in your choice of container/codec (`tar.zst`, `tar.gz`, `tar.xz`, `tar`, or `zip`). Secrets are redacted in stream. What you do with the file — git, S3, USB stick — is up to you.
 - **Built for agents, too** — JSON output when piped, semantic exit codes, machine-readable errors, `--dry-run` everywhere, and `tape schema` for command introspection.
 - **Single binary** — pure Go, no CGO, no runtime dependencies. Linux / macOS / Windows.
 
@@ -125,8 +125,7 @@ Run `tape sync --full` after a tape upgrade if you want to backfill new IR field
 | `tape show <id>` | Replay a session (`--full` includes tool output) |
 | `tape overview` | Dashboard: agents, activity sparkline, top projects, recent sessions |
 | `tape restore <id> --to <agent>` | Continue a session in another agent |
-| `tape backup push / pull` | Sync the archive with a private git remote |
-| `tape backup export / scan` | Redacted tarball snapshot / standalone secret scan |
+| `tape export [output]` | Snapshot the archive to one file (`--format tar\|zip`, `--compress zstd\|gzip\|xz\|none`, filters: `--agent`, `--dir`, `--host`, `--since`, `--scan-only` for an audit-only run) |
 | `tape schema [command]` | Introspect the CLI as JSON (for agents) |
 
 Session ids never need to be typed in full — any unique fragment resolves (`tape show 7dd2afaf`), and `@last` refers to the most recent session.
@@ -161,22 +160,21 @@ Two strategies, chosen automatically:
 - **native** — rewrites the dialogue as a real session file of the target agent, which then resumes it with its own `--resume` mechanism. Supported for claude-code ↔ codex.
 - **brief** — generates a structured handoff document (goal, state, decisions, next steps) and prints the command to start the next agent with it. The summary is written by whichever agent CLI you already have installed (`--llm claude|codex|cursor`), with a deterministic template fallback (`--llm none`) — no API keys needed.
 
-## Backing up
+## Exporting
 
 ```bash
-tape backup push  --remote git@github.com:you/tape-archive.git  # archive-as-git-repo (incremental via git)
-tape backup pull  --remote ...                                  # fresh machine: clone + rebuild index
-tape backup export --output a.tar.zst                           # full compressed, redacted snapshot
-tape backup export --since 24h --output a-incr.tar.zst          # incremental snapshot (last 24h)
-tape backup scan                                                # what would leak if I pushed this?
+tape export                                          # everything → tape-export-<ts>.tar.zst
+tape export snapshot.tar.gz --compress gzip          # explicit name + codec
+tape export --agent codex --since 7d                 # just codex, last week
+tape export --dir . --format zip --compress none     # current project as a .zip
+tape export --scan-only --agent claude-code          # audit secrets without writing
 ```
 
-Two backup styles, both incremental in the way each medium expects:
+`tape export` is a single, single-purpose command: it walks the archive (optionally filtered with the same flags ls/search use) and writes one file. Pick the container with `--format tar|zip` and the codec with `--compress zstd|gzip|xz|none`; defaults are `tar` + `zstd`, the smallest and fastest combo. Output goes to `tape-export-<UTC-timestamp>.<ext>` in the current directory when you don't pass `-o`.
 
-- **`push` (git)** — only changed blobs travel after the first commit; that's git, by design. The archive on disk *is* the working tree.
-- **`export` (tar.zst)** — writes a self-contained, redacted artifact. Use `--since 24h` (or `7d`, `2026-01-01`) to ship just the sessions updated within the window; the resulting tarball merges back into any archive by session id.
+What happens to the file is your choice — tape doesn't ship a "push to S3/git/Drive" command. Any tar / zip is trivially extractable with system tools and uploadable with whatever tool you already use; we'd rather get out of the way than reinvent rclone.
 
-Real API keys end up in coding sessions more often than you think — scan yours. The secret scanner (AWS, GitHub, OpenAI, Anthropic, Slack, JWT, private keys, …) runs before every push and **blocks on findings** unless you pass `--allow-secrets`. `export` replaces secrets with `[REDACTED:<rule>]` inside the artifact; your local files are never modified.
+Real API keys end up in coding sessions more often than you think. By default `tape export` redacts secrets in stream (AWS, GitHub, OpenAI, Anthropic, Slack, JWT, private keys, …) with `[REDACTED:<rule>]` for text and length-preserving masks for binaries; local files are never modified. Pass `--no-redact` to opt out, or `--scan-only` to list what would be redacted without writing anything.
 
 Sync is incremental too — a session is rehashed (and re-archived) only when its source files change size or mtime; the blake3 checksum stays the source of truth when stamps disagree. Sync also keeps the search index in sync with the archive: if you delete `~/.tape/index` or upgrade tape's tokenizer, the next `tape sync` quietly rebuilds it for you. No `index rebuild` command to remember.
 
@@ -188,7 +186,7 @@ Tape follows the [agent-cli-guide](https://github.com/Johnixr/agent-cli-guide) c
 $ tape search "auth refactor" --limit 5 | jq .data.hits[0].session_id
 "claude-code/7dd2afaf"
 
-$ tape schema backup push   # what flags does this command take?
+$ tape schema export        # what flags does this command take?
 ```
 
 - **JSON by default when piped** — every command emits one `{"schema_version":1,"data":{...}}` object on stdout when it is not a TTY (or with `--json`). Colors honor `NO_COLOR`.
@@ -246,10 +244,10 @@ Architecture deep-dive (中文): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 ## Roadmap
 
 - [x] **Archive & search** — claude-code, codex, cursor, opencode, gemini + antigravity, qwen, iflow + qoder, mimocode, kimi-code, aider; CJK tokenization
-- [x] **Backup** — git and tarball targets, secret scanning and redaction
+- [x] **Export** — tar/zip × zstd/gzip/xz/none matrix, filter-scoped slices, secret redaction in stream
 - [x] **Restore** — native claude-code ↔ codex, memory injection into the project's `<AGENT>.md` for everything else, plus transcript / brief fallbacks
 - [ ] **Memory** — distill `MEMORY.md` from session history; MCP server so agents can search past sessions mid-task
-- [ ] More sources (Cline, RooCode, OpenHands, Continue.dev) and backup targets (S3/OSS)
+- [ ] More sources (Cline, RooCode, OpenHands, Continue.dev)
 
 ## License
 

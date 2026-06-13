@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -140,55 +138,45 @@ func TestCLIErrorFormatting(t *testing.T) {
 
 func TestSchemaDescribe(t *testing.T) {
 	root := &cobra.Command{Use: "tape", Short: "root"}
-	sub := &cobra.Command{Use: "backup", Short: "backup things"}
-	push := &cobra.Command{Use: "push", Short: "push it", Example: "  tape backup push"}
-	push.Flags().Bool("dry-run", false, "preview")
-	push.Flags().String("remote", "", "git remote URL")
-	sub.AddCommand(push)
-	root.AddCommand(sub, &cobra.Command{Use: "help"})
+	exp := &cobra.Command{Use: "export", Short: "export the archive", Example: "  tape export"}
+	exp.Flags().Bool("dry-run", false, "preview")
+	exp.Flags().String("output", "", "output file path")
+	root.AddCommand(exp, &cobra.Command{Use: "help"})
 
 	s := describe(root)
-	if len(s.Subcommands) != 1 || s.Subcommands[0].Name != "backup" {
+	if len(s.Subcommands) != 1 || s.Subcommands[0].Name != "export" {
 		t.Fatalf("help command must be hidden, got %+v", s.Subcommands)
 	}
-	p := s.Subcommands[0].Subcommands[0]
-	if p.Name != "push" || p.Example == "" {
-		t.Errorf("push schema: %+v", p)
+	p := s.Subcommands[0]
+	if p.Name != "export" || p.Example == "" {
+		t.Errorf("export schema: %+v", p)
 	}
 	names := map[string]string{}
 	for _, f := range p.Flags {
 		names[f.Name] = f.Type
 	}
-	if names["--dry-run"] != "bool" || names["--remote"] != "string" {
+	if names["--dry-run"] != "bool" || names["--output"] != "string" {
 		t.Errorf("flags: %v", names)
 	}
 }
 
-func TestScanArchiveFindsPlantedSecret(t *testing.T) {
-	dir := t.TempDir()
-	sessDir := filepath.Join(dir, "codex", "p", "s1")
-	os.MkdirAll(filepath.Join(sessDir, "raw"), 0o700)
-	os.WriteFile(filepath.Join(sessDir, "session.json"),
-		[]byte(`{"text":"token AKIAIOSFODNN7EXAMPLE here"}`), 0o600)
-	// raw dir is intentionally skipped by the scanner
-	os.WriteFile(filepath.Join(sessDir, "raw", "x.jsonl"),
-		[]byte("AKIAIOSFODNN7EXAMPLE"), 0o600)
+// TestRedactArtifactKeepLengthForDB pins the per-extension policy
+// the export writer uses: .db files get masked in place (so the
+// SQLite header / page boundaries stay valid), everything else gets
+// the readable [REDACTED:<rule>] marker. Both happen during the
+// streaming write, never against the local file.
+func TestRedactArtifactKeepLengthForDB(t *testing.T) {
+	plain := []byte("hello AKIAIOSFODNN7EXAMPLE world")
+	if out := redactArtifact("codex/p/s/session.json", plain); !strings.Contains(string(out), "[REDACTED:") {
+		t.Errorf("text path lost the readable marker: %q", out)
+	}
 
-	findings, err := scanArchive(dir)
-	if err != nil {
-		t.Fatal(err)
+	dbBytes := []byte("AKIAIOSFODNN7EXAMPLE")
+	masked := redactArtifact("opencode/storage/opencode.db", dbBytes)
+	if len(masked) != len(dbBytes) {
+		t.Errorf(".db path must keep length: got %d, want %d", len(masked), len(dbBytes))
 	}
-	if len(findings) != 1 {
-		t.Fatalf("want exactly 1 finding (raw skipped), got %d: %+v", len(findings), findings)
-	}
-	if findings[0].Rule != "aws-access-key" || !strings.Contains(findings[0].Path, "session.json") {
-		t.Errorf("finding: %+v", findings[0])
-	}
-}
-
-func TestScanArchiveMissingDir(t *testing.T) {
-	findings, err := scanArchive(filepath.Join(t.TempDir(), "nope"))
-	if err != nil || len(findings) != 0 {
-		t.Errorf("missing dir must be clean: %v %v", findings, err)
+	if string(masked) == string(dbBytes) {
+		t.Error(".db path: secret survived in-place masking")
 	}
 }

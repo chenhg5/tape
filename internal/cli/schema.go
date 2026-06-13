@@ -28,7 +28,7 @@ func newSchemaCmd(app *App, root *cobra.Command) *cobra.Command {
 	return &cobra.Command{
 		Use:     "schema [command...]",
 		Short:   "Introspect the command tree as JSON (for agents)",
-		Example: "  tape schema\n  tape schema backup push",
+		Example: "  tape schema\n  tape schema export",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := root
 			if len(args) > 0 {

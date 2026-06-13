@@ -13,7 +13,7 @@ import (
 func TestSmokeHelp(t *testing.T) {
 	e := newEnv(t)
 	r := e.mustRun(0, "--help")
-	for _, want := range []string{"tape", "sync", "search", "restore", "backup", "Exit codes"} {
+	for _, want := range []string{"tape", "sync", "search", "restore", "export", "Exit codes"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("--help missing %q", want)
 		}
@@ -78,7 +78,7 @@ func TestSmokeSchemaIsValidJSON(t *testing.T) {
 	// `index` is intentionally hidden — the user-facing surface is
 	// `sync`, which self-heals the index. The hidden command still works
 	// (see TestHiddenIndexRebuildStillRuns) but does not advertise.
-	for _, want := range []string{"sync", "ls", "search", "show", "overview", "backup", "restore", "schema"} {
+	for _, want := range []string{"sync", "ls", "search", "show", "overview", "export", "restore", "schema"} {
 		if !names[want] {
 			t.Errorf("schema missing command %q", want)
 		}

@@ -106,24 +106,31 @@ Strategies, highest fidelity first:
 `memory`. For agents the recommended call is explicit, e.g.
 `tape restore @last --to cursor --strategy memory --json`.
 
-**Back up** (push is blocked if the secret scan finds anything):
+**Export** the archive (or a filtered slice) as one file. Tape only
+*generates* the snapshot — uploading to S3/git/Drive is the caller's
+job, by design:
 
 ```bash
-tape backup scan                   # exit 0 = clean, exit 1 = secrets found
-tape backup push --remote <git-url>             # git, incremental by nature
-tape backup export --output archive.tar.zst     # full redacted snapshot
-tape backup export --since 24h --output incr.tar.zst  # incremental snapshot
+tape export                                    # tape-export-<ts>.tar.zst in cwd
+tape export snapshot.tar.gz --compress gzip    # explicit name + codec
+tape export --agent codex --since 7d           # filter-scoped slice
+tape export --dir . --format zip --compress none  # current project as a .zip
+tape export --scan-only                        # audit secrets, write nothing
 ```
 
-`push` uses git, so only changed blobs travel after the first commit.
-`export` writes a self-contained `.tar.zst`; `--since` shrinks it to just
-the sessions updated within the given window.
+`--format tar|zip` × `--compress zstd|gzip|xz|none` (zip implies its own
+DEFLATE so `--compress zstd` etc. is a usage error). Default is tar+zstd.
+Secrets in `session.json` are redacted in stream
+(`[REDACTED:<rule>]` for text, length-preserving masks for binaries);
+pass `--no-redact` for verbatim bytes. `--scan-only` is exit 0 even when
+findings exist — it's an audit mode, not a gate (the redactor is the
+gate, and it always runs on real exports).
 
 ## Conventions
 
 - Session ids look like `codex/019ea0af-...`; any unique fragment resolves,
   `@last` means the most recent session.
-- `--dry-run` first for anything that writes (restore, backup push/export).
+- `--dry-run` first for anything that writes (restore, export).
 - All timestamps are RFC 3339; `--since` accepts `24h`, `7d`, `2026-01-31`.
 - The archive lives in `$TAPE_HOME` (default `~/.tape`; legacy `$TAPE_DIR`
   is still honored). There is no `--dir` for tape's storage location on

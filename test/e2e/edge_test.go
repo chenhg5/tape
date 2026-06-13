@@ -38,9 +38,9 @@ func TestSearchHitsAgentAndProjectMeta(t *testing.T) {
 	}
 }
 
-// `tape backup export --since` writes a smaller artifact containing only
+// `tape export --since` writes a smaller artifact containing only
 // recently-updated sessions.
-func TestBackupExportIncremental(t *testing.T) {
+func TestExportSinceShrinksArtifact(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
 	}
@@ -49,7 +49,7 @@ func TestBackupExportIncremental(t *testing.T) {
 	e.mustRun(0, "sync")
 
 	fullPath := filepath.Join(t.TempDir(), "full.tar.zst")
-	e.mustRun(0, "backup", "export", "--output", fullPath)
+	e.mustRun(0, "export", "-o", fullPath)
 	fullSize := fileSize(t, fullPath)
 
 	// A horizon in the far future excludes every session — proves the
@@ -57,11 +57,8 @@ func TestBackupExportIncremental(t *testing.T) {
 	// tar.zst still contains zstd framing bytes, so we only assert it
 	// is strictly less than the full one).
 	incrPath := filepath.Join(t.TempDir(), "incr.tar.zst")
-	r := e.mustRun(0, "backup", "export", "--since", "9999-01-01", "--output", incrPath)
+	r := e.mustRun(0, "export", "-o", incrPath, "--since", "9999-01-01")
 	res := r.data(t)["result"].(map[string]any)
-	if res["action"] != "export-incremental" {
-		t.Fatalf("incremental export action = %v", res["action"])
-	}
 	if n, _ := res["changed_files"].(float64); n != 0 {
 		t.Errorf("9999-01-01 horizon should yield 0 files, got %v", res)
 	}
@@ -104,14 +101,16 @@ func TestSearchFilters(t *testing.T) {
 	}
 }
 
-// `tape schema <path>` must resolve nested commands; unknown paths are
-// usage errors.
+// `tape schema <path>` must resolve top-level commands and pull
+// their flags; unknown paths are usage errors. We use `export`
+// here since it's a representative top-level command with several
+// non-trivial flags worth introspecting.
 func TestSchemaSubcommand(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
 	}
 	e := newEnv(t)
-	r := e.mustRun(0, "schema", "backup", "push")
+	r := e.mustRun(0, "schema", "export")
 	var envelope struct {
 		Data struct {
 			Name  string `json:"name"`
@@ -123,14 +122,14 @@ func TestSchemaSubcommand(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Data.Name != "push" {
+	if envelope.Data.Name != "export" {
 		t.Errorf("schema name = %q", envelope.Data.Name)
 	}
 	flags := map[string]bool{}
 	for _, f := range envelope.Data.Flags {
 		flags[f.Name] = true
 	}
-	for _, want := range []string{"--remote", "--dry-run", "--allow-secrets"} {
+	for _, want := range []string{"--output", "--format", "--compress", "--no-redact", "--dry-run", "--scan-only"} {
 		if !flags[want] {
 			t.Errorf("schema missing flag %s", want)
 		}
@@ -574,7 +573,7 @@ func TestJSONEnvelopeEverywhere(t *testing.T) {
 		{"search", "stateless"},
 		{"show", "7dd2afaf"},
 		{"index", "rebuild"},
-		{"backup", "scan"},
+		{"export", "--scan-only"},
 	} {
 		r := e.mustRun(0, args...)
 		var envelope struct {

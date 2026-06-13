@@ -9,5 +9,10 @@ coverage.out
 # build artifacts
 dist/
 
-# scratch artifacts from `tape backup export` runs in the repo root
+# scratch artifacts from `tape export` runs in the repo root
+tape-export-*.tar.zst
+tape-export-*.tar.gz
+tape-export-*.tar.xz
+tape-export-*.tar
+tape-export-*.zip
 *.tar.zst

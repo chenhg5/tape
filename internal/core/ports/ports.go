@@ -94,43 +94,46 @@ type Hit struct {
 }
 
 // Index provides full-text search over archived sessions. It is fully
-// rebuildable from the Archive and is never part of backups.
+// rebuildable from the Archive and is never part of exports.
 type Index interface {
 	Upsert(ctx context.Context, s *model.Session) error
 	Search(ctx context.Context, q Query) ([]Hit, error)
 	Close() error
 }
 
-type BackupOpts struct {
-	ArchiveDir  string
-	Destination string // git remote URL, tarball path, ... target-specific
-	Message     string
-	DryRun      bool
-	// Since restricts the export to sessions updated at/after this time.
-	// Zero = full snapshot (the default).
-	Since time.Time
-	// RedactCopy, when non-nil, transforms file contents on the way into
-	// the backup artifact. Local archive files are never modified.
+// ExportOpts describes one `tape export` invocation. The defaults
+// (zero Filter, no Output, RedactCopy nil) export every archived
+// session as a tar.zst on stdout — but the CLI always sets Output,
+// so that path is mostly here for tests.
+//
+// Filter follows the same shape ls/search use, so users can scope
+// exports the way they already scope listings (--agent, --dir,
+// --since, --host). RedactCopy is wired by the CLI when --no-redact
+// is *off* (the default); the snapshot writer otherwise passes file
+// bytes through unchanged.
+type ExportOpts struct {
+	ArchiveDir string
+	Output     string // local file path
+	Filter     Filter
+	Format     string // "tar" or "zip"
+	Compress   string // "zstd" | "gzip" | "xz" | "none"; only meaningful for tar
+	DryRun     bool
+	// RedactCopy, when non-nil, transforms file contents on the way
+	// into the artifact. Local archive files are never modified.
 	RedactCopy func(path string, data []byte) []byte
-	// OnProgress is called as each file is added/extracted. total may be
-	// -1 when unknown (streaming).
+	// OnProgress fires per file written. total may be -1 when unknown.
 	OnProgress func(done, total int64, path string)
 }
 
-type BackupResult struct {
-	Target  string `json:"target"`
-	Action  string `json:"action"`
-	Changed int    `json:"changed_files"`
-	Ref     string `json:"ref,omitempty"`
+// ExportResult is what the CLI prints after a successful export, plus
+// what shows up in `tape export --json`. Changed counts files written
+// (or scanned in --dry-run); Bytes is the on-disk artifact size.
+type ExportResult struct {
 	Output  string `json:"output,omitempty"`
+	Format  string `json:"format"`
+	Changed int    `json:"changed_files"`
+	Bytes   int64  `json:"bytes,omitempty"`
 	Note    string `json:"note,omitempty"`
-}
-
-// BackupTarget moves the archive to/from external storage.
-type BackupTarget interface {
-	Name() string
-	Push(ctx context.Context, opts BackupOpts) (*BackupResult, error)
-	Pull(ctx context.Context, opts BackupOpts) (*BackupResult, error)
 }
 
 // SessionWriter is implemented by sources that can also write a session in

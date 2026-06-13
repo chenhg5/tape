@@ -7,7 +7,7 @@
 //	    session.json      normalized IR (regenerable from raw)
 //	    meta.json         checksum, source paths, summary fields
 //
-// raw/ is the only non-regenerable part; backups only need raw + meta.
+// raw/ is the only non-regenerable part; exports only need raw + meta.
 package local
 
 import (
@@ -56,7 +56,7 @@ type meta struct {
 // has changed since the last archive. nanosecond mtime + byte size catches
 // every meaningful edit in practice; the blake3 checksum stays the ground
 // truth for cases where the stamp is suspicious (e.g. mtime drift, restore
-// from backup).
+// from an export tarball).
 type fileStamp struct {
 	Path  string    `json:"path"`
 	Size  int64     `json:"size"`

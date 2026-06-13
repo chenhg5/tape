@@ -1,5 +1,5 @@
-// Package redact detects and masks secrets in session content. Backups are
-// the moment private sessions leave the machine, so the backup chain runs
+// Package redact detects and masks secrets in session content. Exports are
+// the moment private sessions leave the machine, so the export chain runs
 // these rules by default; local archive files are never modified.
 package redact
 
