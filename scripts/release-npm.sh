@@ -30,13 +30,25 @@
 #   NPM_DRY_RUN   set to 1 to run `npm publish --dry-run` (nothing uploaded)
 set -euo pipefail
 
-# Refuse to run from anywhere except the repo root. The templates
-# in npm/ are not a publishable package on their own — package.json
-# carries __VERSION__ / __PACKAGE__ placeholders.
-if [ ! -f npm/package.json ] || [ ! -d cmd/tape ]; then
-  echo "error: run from the repo root (cwd: $(pwd))" >&2
-  echo "       expected ./npm/package.json and ./cmd/tape/" >&2
-  echo "       not from inside npm/ — see npm/README.md for the why." >&2
+# Refuse to run from anywhere except the repo root, and refuse to
+# run against the pre-rewrite npm/ layout (5 platform sub-packages,
+# main-package.json + platform-package.json + tape.js — see
+# commit a4cb57b). Distinguish the two cases so the fix is obvious.
+if [ ! -d cmd/tape ]; then
+  echo "error: not in the tape repo root (cwd: $(pwd))" >&2
+  echo "       expected ./cmd/tape/ to exist; cd to the repo root and retry." >&2
+  exit 2
+fi
+if [ ! -f npm/package.json ]; then
+  if [ -f npm/main-package.json ]; then
+    echo "error: stale npm/ layout — your checkout predates commit a4cb57b" >&2
+    echo "       (npm/main-package.json + platform-package.json + tape.js)." >&2
+    echo "       Pull the latest main and retry:" >&2
+    echo "         git pull --rebase origin main" >&2
+  else
+    echo "error: npm/package.json missing (cwd: $(pwd))" >&2
+    echo "       expected ./npm/package.json — is your checkout corrupt?" >&2
+  fi
   exit 2
 fi
 
