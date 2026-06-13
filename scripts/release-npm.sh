@@ -70,6 +70,7 @@ mkdir -p "$maindir"
 sed -e "s|__PACKAGE__|$PKG|g" -e "s|__VERSION__|$VERSION|g" \
   npm/main-package.json > "$maindir/package.json"
 sed -e "s|^const PACKAGE_NAME = .*|const PACKAGE_NAME = \"$PKG\";|" \
+    -e "s|__VERSION__|$VERSION|g" \
   npm/tape.js > "$maindir/tape.js"
 chmod +x "$maindir/tape.js"
 cp README.md "$maindir/README.md" 2>/dev/null || true
