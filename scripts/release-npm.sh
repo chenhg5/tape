@@ -20,6 +20,18 @@
 # passes it unconditionally so re-publishing is safe.
 set -euo pipefail
 
+# Refuse to run from anywhere except the repo root. The templates
+# in npm/ are not a publishable package on their own; this script
+# is the only correct entry point and it expects ./npm and ./cmd/tape
+# as relative paths.
+if [ ! -f npm/main-package.json ] || [ ! -d cmd/tape ]; then
+  echo "error: run from the repo root (cwd: $(pwd))" >&2
+  echo "       expected ./npm/main-package.json and ./cmd/tape/" >&2
+  echo "       not from inside npm/ — there's no package.json there;" >&2
+  echo "       see npm/README.md for the why." >&2
+  exit 2
+fi
+
 VERSION=${1:?usage: release-npm.sh <version> [latest|beta]}
 TAG=${2:-latest}
 PKG=${NPM_PACKAGE:-@tapeai/tape}
