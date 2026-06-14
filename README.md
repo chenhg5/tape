@@ -1,6 +1,11 @@
 <div align="center">
 
-# tape
+<h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo.svg" alt="tape" height="56">
+</picture>
+</h1>
 
 **Record, search and replay your AI coding sessions.**
 
