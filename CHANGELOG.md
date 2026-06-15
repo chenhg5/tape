@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-06-15
+
+Focused follow-up to v0.1.0: fixes the SQL crash hit by users who
+upgraded an older index, rewires the npm distribution to a single
+package, and makes empty-state errors actionable.
+
+### Fixed
+
+- **`tape search` no longer crashes with `SQL logic error: no such
+  column: s.host (1)`** after upgrading from a pre-v4 index. The
+  `host` column added in 0.1.0's v4 schema is now applied via an
+  idempotent `ALTER TABLE` migration the first time `Open()` runs
+  against a legacy DB, instead of silently relying on a re-create
+  that never fired. Existing rows get `host=NULL` until the next
+  `tape sync` re-Upserts them; the `COALESCE(s.host,'')` already in
+  every query handles the transitional state without surprises.
+- **Picker / table alignment for long agent names** (`claude-code`,
+  `antigravity`). The shortID column was hard-coded to 22 cells; the
+  worst case is 23 (`claude-code/` + abbreviated id). Every row from
+  one of those agents pushed agent / time / snippet right by one
+  cell. Fixed by raising the constant to 24 and consolidating five
+  duplicated literals behind a single `shortIDColW`. Regression test
+  iterates `agentid.Canonicals()` so a future 12-rune agent fails
+  loudly instead of reintroducing the bug.
+
+### Changed
+
+- **npm: one package instead of six.** `@tapeai/tape` is now a
+  ~15 KB launcher. On install, the postinstall script races GitHub
+  and Gitee for the right prebuilt binary, verifies its sha256,
+  and drops it in `bin/`. If install-time network is blocked
+  (CI without egress, `--ignore-scripts`, locked-down corporate
+  proxies), the binary is lazily fetched on the first `tape ...`
+  invocation — `npm install` itself never fails just because the
+  download did. Pin with `TAPE_MIRROR=github|gitee`.
+- **Empty index / archive now self-explain.** A first-time `tape
+  search` on a fresh machine used to return a bare `tape: no
+  results` with no path forward. It now reports either
+  `tape: no archived sessions yet — try: run \`tape sync\`...` (ls)
+  or `tape: no results — your search index is empty — try: run
+  \`tape sync\`...` (search), and serialises both in `--json` mode
+  under `.message` / `.suggestion`. Exit code stays at 3, so any
+  agent script branching on "found nothing" keeps working.
+
+### Added
+
+- **Raw binaries in every GitHub + Gitee release.** Each release
+  now ships both the bundled `tape_<ver>_<os>_<arch>.{tar.gz,zip}`
+  (LICENSE + README + binary) *and* the raw
+  `tape-<os>-<arch>[.exe]` with matching `.sha256` sidecars. The
+  one-line installer prefers the raw asset (one curl, no tar/unzip
+  dep, Docker `COPY`-friendly) and falls back to the bundled
+  archive when the raw isn't on the release.
+- **Brand assets** (`assets/`): minimal reel-to-reel SVG logo in
+  wordmark + mark + favicon variants, with `prefers-color-scheme`
+  switching via `<picture>` in the README. Single-color, vector-only,
+  16 px favicon-grade rasterization.
+
+### Internal
+
+- `cliError` now satisfies `errors.Is(_, ErrNoResults)` when its
+  Type is `"no_results"`, so commands can attach a Suggestion on
+  the empty path without losing the exit-code-3 contract.
+- `scripts/release-npm.sh` refuses to run from anywhere except the
+  repo root, refuses to publish if the matching binary asset is
+  missing from the GitHub release, and now distinguishes "stale
+  checkout" (pre-rewrite npm/ layout) from "wrong cwd" in its
+  guardrail so users know whether to `git pull` or `cd`.
+
 ## [0.1.0] — 2026-06-13
 
 First public release. Tape archives, searches, and replays AI coding
