@@ -182,7 +182,7 @@ func renderOverview(app *App, st overviewStats) {
 		if title == "" {
 			title = s.Project
 		}
-		id := padRightDisp(shortID(s.ID), 22)
+		id := padRightDisp(shortID(s.ID), shortIDColW)
 		fmt.Printf("  %s %s %s\n",
 			app.cyan(shortID(s.ID))+id[len(shortID(s.ID)):],
 			padRightDisp(relTime(s.UpdatedAt), 8),

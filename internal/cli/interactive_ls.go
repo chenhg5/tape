@@ -61,7 +61,7 @@ func pickSessionFromSummaries(app *App, sums []model.Summary, prompt string) (mo
 			title = "@" + s.Host + "  " + title
 		}
 		labels[i] = fmt.Sprintf("%s  %s  %s  %s",
-			app.cyan(padRightDisp(shortID(s.ID), 22)),
+			app.cyan(padRightDisp(shortID(s.ID), shortIDColW)),
 			app.agentColor(padRightDisp(s.Agent, 11)),
 			padRightDisp(relTime(s.UpdatedAt), 9),
 			truncDisp(title, 50))

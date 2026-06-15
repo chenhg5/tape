@@ -92,7 +92,7 @@ func pickSession(ctx context.Context, app *App, dir, prompt string) (model.Summa
 			title = s.Project
 		}
 		labels[i] = fmt.Sprintf("%s  %s  %s  %s",
-			app.cyan(padRightDisp(shortID(s.ID), 22)),
+			app.cyan(padRightDisp(shortID(s.ID), shortIDColW)),
 			app.agentColor(padRightDisp(s.Agent, 11)),
 			padRightDisp(relTime(s.UpdatedAt), 9),
 			truncDisp(title, 50))

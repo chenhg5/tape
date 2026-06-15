@@ -161,7 +161,8 @@ func resolveExcludeDirs(raw []string) []string {
 // Project is shown as a subtle prefix on the title when it differs from
 // the title, to save horizontal space.
 func renderSessionList(app *App, sums []model.Summary, page, pageSize, total int) {
-	const idW, agentW, timeW, msgsW = 22, 11, 9, 6
+	const agentW, timeW, msgsW = 11, 9, 6
+	idW := shortIDColW
 	app.lead()
 
 	header := fmt.Sprintf("  %s  %s  %s  %s  %s",
@@ -352,6 +353,19 @@ func shortID(id string) string {
 	}
 	return abbrev(id)
 }
+
+// shortIDColW is the display width pickers/tables reserve for the
+// shortID column. It must be at least:
+//
+//	max(len(<agent-name>)) + 1 (the '/') + 11 (the "XXXXXX…XXXX" abbrev)
+//
+// Today the longest agent names are "claude-code" and "antigravity"
+// (11 runes), so the worst case is 11+1+11 = 23. We round up to 24 so
+// a future 12-rune agent name still fits — without this margin, adding
+// e.g. "google-cloud" silently re-introduces the broken-alignment
+// regression the user reported on tape search. Audited callers:
+// ls.go (idW const), search.go, interactive_ls.go, prompt.go, overview.go.
+const shortIDColW = 24
 
 func truncate(s string, n int) string {
 	if len(s) <= n {

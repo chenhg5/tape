@@ -7,11 +7,40 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/chenhg5/tape/internal/agentid"
 	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/core/service"
 )
+
+// Regression: tape search showed mis-aligned rows when the result set
+// mixed short agent names (cursor, codex) with long ones (claude-code,
+// antigravity). shortIDColW must be wide enough for every registered
+// agent's "name/XXXXXX…XXXX" abbreviated id, or padRightDisp returns
+// the string unchanged and every column to its right slides over.
+func TestShortIDColumnFitsEveryAgentName(t *testing.T) {
+	// abbrev branch in shortID always emits 6+1+4 = 11 runes; +1 for
+	// the '/'. The agent name itself contributes len(name) runes.
+	const abbrevPlusSep = 12
+	for _, name := range agentid.Canonicals() {
+		id := name + "/abcdef0123456789abcdef"
+		short := shortID(id)
+		width := utf8.RuneCountInString(short)
+		if width != utf8.RuneCountInString(name)+abbrevPlusSep {
+			t.Fatalf("shortID changed shape for %q: %q (want %d runes)",
+				name, short, utf8.RuneCountInString(name)+abbrevPlusSep)
+		}
+		if width > shortIDColW {
+			t.Errorf("agent %q produces a %d-rune shortID %q "+
+				"but shortIDColW is %d — every picker / table that uses "+
+				"padRightDisp(shortID(...), shortIDColW) will mis-align "+
+				"on rows from this agent. Bump shortIDColW.",
+				name, width, short, shortIDColW)
+		}
+	}
+}
 
 // captureStdout swaps os.Stdout while fn runs and returns what was written.
 func captureStdout(t *testing.T, fn func()) string {

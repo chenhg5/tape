@@ -330,7 +330,7 @@ func runInteractiveSearch(ctx context.Context, app *App, query string, hits []po
 			snippet = "@" + g.first.Host + "  " + snippet
 		}
 		labels[i] = fmt.Sprintf("%s  %s  %s  %s%s",
-			app.cyan(padRightDisp(shortID(id), 22)),
+			app.cyan(padRightDisp(shortID(id), shortIDColW)),
 			app.agentColor(padRightDisp(g.first.Agent, 11)),
 			padRightDisp(relTime(g.first.Timestamp), 9),
 			snippet, more)
