@@ -2,12 +2,15 @@ package sqlitefts
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
@@ -381,6 +384,74 @@ func TestEmptyQueryRejected(t *testing.T) {
 	if _, err := ix.Search(context.Background(), ports.Query{Text: "!!!"}); err == nil {
 		t.Error("punctuation-only query must be rejected")
 	}
+}
+
+// Regression for "no such column: s.host" reported on tape search
+// after upgrading from a pre-v4 build. Such databases were created
+// before the host column existed in the CREATE TABLE; SQLite's
+// CREATE TABLE IF NOT EXISTS does nothing on re-run, so without an
+// explicit ALTER migration the column never appears and every search
+// query touching s.host blows up.
+func TestOpenMigratesPreV4DatabaseAddsHostColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "old.db")
+	// Build the pre-v4 schema by hand: same tables as the current
+	// CREATE block, but the sessions table omits the host column.
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preV4 := `
+CREATE TABLE sessions (
+    id         TEXT PRIMARY KEY,
+    agent      TEXT NOT NULL,
+    title      TEXT,
+    project    TEXT,
+    cwd        TEXT,
+    started_at INTEGER,
+    updated_at INTEGER,
+    msg_count  INTEGER
+);
+CREATE TABLE props (key TEXT PRIMARY KEY, value TEXT);
+CREATE VIRTUAL TABLE fts_messages USING fts5(
+    tokens, text UNINDEXED, session_id UNINDEXED,
+    message_id UNINDEXED, role UNINDEXED, ts UNINDEXED,
+    tokenize = 'unicode61'
+);
+INSERT INTO sessions (id, agent, title, project, cwd, started_at, updated_at, msg_count)
+  VALUES ('claude-code/old', 'claude-code', 'old session', 'demo', '/tmp/demo', 0, 0, 1);
+INSERT INTO fts_messages (tokens, text, session_id, message_id, role, ts)
+  VALUES ('mimo code', 'MiMo Code is the agent we were testing', 'claude-code/old', 'm1', 'user', 0);
+`
+	if _, err := rawDB.Exec(preV4); err != nil {
+		t.Fatalf("seed pre-v4 schema: %v", err)
+	}
+	rawDB.Close()
+
+	ix, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open should migrate the legacy db, got: %v", err)
+	}
+	defer ix.Close()
+
+	hits, err := ix.Search(context.Background(), ports.Query{Text: "MiMo Code"})
+	if err != nil {
+		t.Fatalf("search after migration should succeed, got: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("expected at least one hit from the pre-v4 session")
+	}
+	if hits[0].Host != "" {
+		t.Errorf("legacy rows should report empty host (got %q)", hits[0].Host)
+	}
+
+	// Second Open is a no-op for migrations: the ALTER would now hit
+	// "duplicate column name" and runMigrations must swallow that.
+	ix.Close()
+	ix2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("re-Open after migration must not fail: %v", err)
+	}
+	ix2.Close()
 }
 
 func TestMakeSnippet(t *testing.T) {

@@ -78,7 +78,43 @@ func Open(path string) (*Index, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := runMigrations(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
 	return &Index{db: db}, nil
+}
+
+// runMigrations applies idempotent ALTER TABLE statements so databases
+// created by older builds gain the columns the current code expects.
+// SQLite has no ADD COLUMN IF NOT EXISTS, so the convention is to ALTER
+// unconditionally and swallow the "duplicate column" error — the column
+// is already present either because we just created it via the CREATE
+// TABLE block above (fresh DB) or because a previous upgrade ran this
+// migration (existing DB on its second startup).
+//
+// Each entry's comment must point at the indexBuildVersion bump it
+// corresponds to, so a future maintainer adding migration N can grep
+// for the version number and find both the schema change and the
+// rebuild trigger in one place.
+func runMigrations(db *sql.DB) error {
+	alters := []string{
+		// v4 (2026-06-13): sessions gained a host column so --host
+		// scoping works in search without round-tripping through the
+		// archive. Pre-v4 indexes leave the column NULL until the
+		// next `tape sync` re-Upserts every session.
+		`ALTER TABLE sessions ADD COLUMN host TEXT`,
+	}
+	for _, q := range alters {
+		if _, err := db.Exec(q); err != nil {
+			msg := err.Error()
+			if !strings.Contains(msg, "duplicate column") &&
+				!strings.Contains(msg, "already exists") {
+				return fmt.Errorf("%s: %w", q, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (ix *Index) Close() error { return ix.db.Close() }
