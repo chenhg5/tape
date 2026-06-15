@@ -256,7 +256,16 @@ you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 	case errors.Is(err, errDryRun):
 		return ExitDryRunOK
 	case errors.Is(err, ErrNoResults):
-		app.reportError(cliError{Type: "no_results", Message: "no results"})
+		// Honor any cliError Suggestion the caller attached (see
+		// noResultsHint / cliError.Is) so commands can explain *why*
+		// the result set is empty — e.g. "index hasn't been built
+		// yet, run tape sync" — without losing exit code 3.
+		var ce cliError
+		if errors.As(err, &ce) {
+			app.reportError(ce)
+		} else {
+			app.reportError(cliError{Type: "no_results", Message: "no results"})
+		}
 		return ExitNoResults
 	case isUsageError(err) || isCobraUsage(err):
 		app.reportError(cliError{Type: "usage", Message: err.Error()})

@@ -155,6 +155,16 @@ func (e cliError) Error() string {
 	return e.Message
 }
 
+// Is lets errors.Is(cliError{Type:"no_results"}, ErrNoResults) succeed,
+// so commands can return a Suggestion-carrying cliError on the empty
+// path AND keep the semantic exit code (3) that drives agent branching.
+// Without this, wrapping no-results in cliError would silently demote
+// the exit to 1 — every CI script that branches on "code 3 == nothing
+// found" would break.
+func (e cliError) Is(target error) bool {
+	return target == ErrNoResults && e.Type == "no_results"
+}
+
 // reportError writes the error to stderr, as JSON when in robot mode.
 // In human mode a cliError's Suggestion is broken onto its own line with
 // a "try:" prefix so multi-sentence hints stay scannable.

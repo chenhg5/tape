@@ -301,12 +301,12 @@ ignores --page; for deep browsing combine --print with --page.`,
 					return err
 				}
 				if len(sums) == 0 {
-					return ErrNoResults
+					return noResultsForLs(cmd.Context(), app)
 				}
 				return nil
 			}
 			if len(sums) == 0 {
-				return ErrNoResults
+				return noResultsForLs(cmd.Context(), app)
 			}
 			renderSessionList(app, sums, page, limit, total)
 			return nil

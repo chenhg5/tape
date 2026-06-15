@@ -106,6 +106,35 @@ func TestSmokeSyncOnEmptyMachine(t *testing.T) {
 	if r.errJSON(t)["error"] != "no_results" {
 		t.Errorf("stderr error = %v", r.errJSON(t))
 	}
+	// On a fresh machine the empty-archive hint must tell the user
+	// to run `tape sync` — otherwise a first-time user gets a
+	// cryptic "no results" and no path forward. The message and
+	// suggestion are user-visible contract.
+	if msg, _ := r.errJSON(t)["message"].(string); !strings.Contains(msg, "no archived sessions") {
+		t.Errorf("empty-archive hint missing from message: %q", msg)
+	}
+	if sug, _ := r.errJSON(t)["suggestion"].(string); !strings.Contains(sug, "tape sync") {
+		t.Errorf("empty-archive hint should suggest tape sync, got %q", sug)
+	}
+}
+
+func TestSmokeSearchOnEmptyIndexHintsTapeSync(t *testing.T) {
+	e := newEnv(t)
+	// No sync yet: archive and index are both empty. Searching for a
+	// term that exists in no session must give exit 3 *and* explain
+	// that the index is empty + suggest `tape sync`. Before this fix
+	// you just got "no results" with no path forward.
+	r := e.mustRun(3, "search", "anything")
+	stderr := r.errJSON(t)
+	if stderr["error"] != "no_results" {
+		t.Errorf("error type = %v", stderr["error"])
+	}
+	if msg, _ := stderr["message"].(string); !strings.Contains(msg, "index is empty") {
+		t.Errorf("empty-index hint missing from message: %q", msg)
+	}
+	if sug, _ := stderr["suggestion"].(string); !strings.Contains(sug, "tape sync") {
+		t.Errorf("empty-index hint should suggest tape sync, got %q", sug)
+	}
 }
 
 func TestSmokeUsageErrors(t *testing.T) {

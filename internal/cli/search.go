@@ -257,12 +257,12 @@ the most useful match is usually "the conversation I just had". Switch to
 					return err
 				}
 				if len(hits) == 0 {
-					return ErrNoResults
+					return noResultsForSearch(cmd.Context(), ix)
 				}
 				return nil
 			}
 			if len(hits) == 0 {
-				return ErrNoResults
+				return noResultsForSearch(cmd.Context(), ix)
 			}
 			query := strings.Join(args, " ")
 			// Interactive path mirrors `tape ls`: TTY + no --print + no
