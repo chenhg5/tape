@@ -105,12 +105,12 @@ func TestNormalizeUnknown(t *testing.T) {
 // contract; we only assert the top hit.
 func TestSuggestRankingPicksObviousTypos(t *testing.T) {
 	cases := map[string]string{
-		"cluade":      "claude-code",
-		"claud":       "claude-code",
-		"codx":        "codex",
-		"opencod":     "opencode",
-		"kimicod":     "kimi-code",
-		"antigravit":  "antigravity",
+		"cluade":     "claude-code",
+		"claud":      "claude-code",
+		"codx":       "codex",
+		"opencod":    "opencode",
+		"kimicod":    "kimi-code",
+		"antigravit": "antigravity",
 	}
 	for input, want := range cases {
 		got := Suggest(input, 3)

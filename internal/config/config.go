@@ -41,12 +41,12 @@ const FileName = "config.json"
 // which makes diffs friendly and makes "is the user using this?"
 // trivially answerable by inspecting the file.
 type Defaults struct {
-	ExcludeAgents  []string `json:"exclude_agents,omitempty"`
-	ExcludeDirs    []string `json:"exclude_dirs,omitempty"`
-	ExcludeHosts   []string `json:"exclude_hosts,omitempty"`
-	Jobs           int      `json:"jobs,omitempty"`
-	Format         string   `json:"format,omitempty"`
-	Compress       string   `json:"compress,omitempty"`
+	ExcludeAgents []string `json:"exclude_agents,omitempty"`
+	ExcludeDirs   []string `json:"exclude_dirs,omitempty"`
+	ExcludeHosts  []string `json:"exclude_hosts,omitempty"`
+	Jobs          int      `json:"jobs,omitempty"`
+	Format        string   `json:"format,omitempty"`
+	Compress      string   `json:"compress,omitempty"`
 }
 
 // Config is the top-level on-disk shape. Defaults is the only group
@@ -106,7 +106,7 @@ func Save(home string, c *Config) error {
 // Get reads a single key in dot notation ("defaults.jobs",
 // "defaults.exclude_agents") and returns its current value as a
 // generic any plus a "set?" boolean. The unset boolean lets callers
-// distinguish "user explicitly set this to 0 / ''" from "default".
+// distinguish "user explicitly set this to 0 / ”" from "default".
 //
 // We use reflection over the struct so adding a new field gets
 // dot-key support for free (no switch to update). The cost is one

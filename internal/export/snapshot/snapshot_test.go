@@ -97,13 +97,13 @@ func seedArchive(t *testing.T, files map[string]string) string {
 // dependency on Get/Put would fail fast.
 type stubArchive struct{ sums []model.Summary }
 
-func (s stubArchive) Stale(ports.SessionRef) (bool, string, error)        { return false, "", nil }
+func (s stubArchive) Stale(ports.SessionRef) (bool, string, error) { return false, "", nil }
 func (s stubArchive) Put(context.Context, *model.Session, ports.SessionRef, string) error {
 	return nil
 }
-func (s stubArchive) Get(context.Context, string) (*model.Session, error)           { return nil, nil }
-func (s stubArchive) Count(context.Context, ports.Filter) (int, error)              { return 0, nil }
-func (s stubArchive) Resolve(context.Context, string) (string, error)               { return "", nil }
+func (s stubArchive) Get(context.Context, string) (*model.Session, error) { return nil, nil }
+func (s stubArchive) Count(context.Context, ports.Filter) (int, error)    { return 0, nil }
+func (s stubArchive) Resolve(context.Context, string) (string, error)     { return "", nil }
 func (s stubArchive) List(_ context.Context, _ ports.Filter) ([]model.Summary, error) {
 	return s.sums, nil
 }
@@ -230,8 +230,8 @@ func TestWriteDryRunWritesNothing(t *testing.T) {
 // leak into the artifact.
 func TestWriteFilterScopesByArchiveSummaries(t *testing.T) {
 	src := seedArchive(t, map[string]string{
-		"codex/p/sKeep/session.json":      "keep me",
-		"codex/p/sKeep/raw/x.jsonl":       "keep raw",
+		"codex/p/sKeep/session.json":       "keep me",
+		"codex/p/sKeep/raw/x.jsonl":        "keep raw",
 		"claude-code/p/sDrop/session.json": "drop me",
 	})
 	out := filepath.Join(t.TempDir(), "a.tar.zst")

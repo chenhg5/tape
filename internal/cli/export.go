@@ -36,12 +36,12 @@ func (a *App) archiveDir() string { return filepath.Join(a.home, "archive") }
 // consistent with "what was exported".
 func newExportCmd(app *App) *cobra.Command {
 	var (
-		output, agent, dir, since, host          string
-		excludeAgent, excludeDir, excludeHost    []string
-		format, compress                         string
-		splitBy, splitSize                       string
-		jobs                                     int
-		noRedact, dryRun, scanOnly               bool
+		output, agent, dir, since, host       string
+		excludeAgent, excludeDir, excludeHost []string
+		format, compress                      string
+		splitBy, splitSize                    string
+		jobs                                  int
+		noRedact, dryRun, scanOnly            bool
 	)
 	cmd := &cobra.Command{
 		Use:   "export [output]",
@@ -502,11 +502,11 @@ type chunk struct {
 //   - agent: group by Summary.Agent, suffix = agent name
 //   - month: group by YYYY-MM of UpdatedAt, suffix = "YYYY-MM"
 //   - size:  greedy pack — sessions in (sorted) order, breaking
-//            whenever adding the next would exceed sizeBudget;
-//            actual size will under- or overshoot the budget by one
-//            session because we don't split a session across
-//            archives. Suffix = "part-001" zero-padded for natural
-//            ls ordering.
+//     whenever adding the next would exceed sizeBudget;
+//     actual size will under- or overshoot the budget by one
+//     session because we don't split a session across
+//     archives. Suffix = "part-001" zero-padded for natural
+//     ls ordering.
 func planChunks(sums []model.Summary, split splitSpec, sizeOf func(string) int64) []chunk {
 	switch split.mode {
 	case splitAgent:

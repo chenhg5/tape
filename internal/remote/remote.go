@@ -33,18 +33,18 @@ import (
 // remoteScript), so listing an agent the user hasn't installed costs
 // nothing — keep this list permissive.
 var AgentDirs = []string{
-	".claude/projects",                    // claude-code
-	".codex/sessions",                     // codex
-	".cursor/chats",                       // cursor
-	".opencode",                           // opencode parents of .local/share/opencode
-	".local/share/opencode",               // opencode (XDG layout)
-	".gemini",                             // gemini cli (also catches antigravity-cli/)
-	".qwen",                               // qwen code
-	".iflow",                              // iflow
-	".qoder",                              // qoder
-	".aider.chat.history.md",              // aider (flat file)
-	".local/share/mimocode",               // mimocode (XDG layout)
-	".kimi-code",                          // kimi-code
+	".claude/projects",       // claude-code
+	".codex/sessions",        // codex
+	".cursor/chats",          // cursor
+	".opencode",              // opencode parents of .local/share/opencode
+	".local/share/opencode",  // opencode (XDG layout)
+	".gemini",                // gemini cli (also catches antigravity-cli/)
+	".qwen",                  // qwen code
+	".iflow",                 // iflow
+	".qoder",                 // qoder
+	".aider.chat.history.md", // aider (flat file)
+	".local/share/mimocode",  // mimocode (XDG layout)
+	".kimi-code",             // kimi-code
 }
 
 // Mirror pulls session files from one remote host into Dir.

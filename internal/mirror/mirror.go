@@ -121,11 +121,11 @@ func Lookup(name string) (Host, bool) {
 
 // Pick selects the best host for this caller, in order of priority:
 //
-//   1. TAPE_MIRROR=<name> if set and recognized.
-//   2. The fastest host to respond to a HEAD probe (race).
-//   3. Hosts()[0] if every probe failed — better to attempt a
-//      real fetch (which will surface a clear error) than to fail
-//      Pick itself.
+//  1. TAPE_MIRROR=<name> if set and recognized.
+//  2. The fastest host to respond to a HEAD probe (race).
+//  3. Hosts()[0] if every probe failed — better to attempt a
+//     real fetch (which will surface a clear error) than to fail
+//     Pick itself.
 //
 // ctx is respected for the probe race; callers should pass a parent
 // context with a sensible deadline (or rely on probeTimeout, which

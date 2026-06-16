@@ -79,15 +79,15 @@ func TestShortIDDistinguishesSimilarPrefixes(t *testing.T) {
 
 // TestShellQuote pins the POSIX single-quote escape rule we rely on
 // when building remote ssh commands (a stray quote inside cwd must not
-// break the shell). The escape sequence '\'' is awkward but standard;
+// break the shell). The escape sequence '\” is awkward but standard;
 // every POSIX shell handles it.
 func TestShellQuote(t *testing.T) {
 	cases := map[string]string{
-		"":                                          "''",
-		"/root/code/spaceship":                      "'/root/code/spaceship'",
-		"/home/me/with space":                       "'/home/me/with space'",
-		"/tmp/it's/quoted":                          `'/tmp/it'\''s/quoted'`,
-		`/path/with "double" and 'single' quotes`:   `'/path/with "double" and '\''single'\'' quotes'`,
+		"":                     "''",
+		"/root/code/spaceship": "'/root/code/spaceship'",
+		"/home/me/with space":  "'/home/me/with space'",
+		"/tmp/it's/quoted":     `'/tmp/it'\''s/quoted'`,
+		`/path/with "double" and 'single' quotes`: `'/path/with "double" and '\''single'\'' quotes'`,
 	}
 	for in, want := range cases {
 		if got := shellQuote(in); got != want {
@@ -224,12 +224,12 @@ func TestParseSplitValidation(t *testing.T) {
 // not ".tar.codex.zst") so the file remains a recognizable tar.zst.
 func TestInsertSuffix(t *testing.T) {
 	cases := map[[2]string]string{
-		{"out.tar.zst", "codex"}:                  "out.codex.tar.zst",
-		{"out.tar.gz", "2026-06"}:                 "out.2026-06.tar.gz",
-		{"out.tar.xz", "part-001"}:                "out.part-001.tar.xz",
-		{"out.zip", "codex"}:                      "out.codex.zip",
-		{"out.tar", "codex"}:                      "out.codex.tar",
-		{"/abs/p/snap.tar.zst", "agent-x"}:        "/abs/p/snap.agent-x.tar.zst",
+		{"out.tar.zst", "codex"}:           "out.codex.tar.zst",
+		{"out.tar.gz", "2026-06"}:          "out.2026-06.tar.gz",
+		{"out.tar.xz", "part-001"}:         "out.part-001.tar.xz",
+		{"out.zip", "codex"}:               "out.codex.zip",
+		{"out.tar", "codex"}:               "out.codex.tar",
+		{"/abs/p/snap.tar.zst", "agent-x"}: "/abs/p/snap.agent-x.tar.zst",
 	}
 	for in, want := range cases {
 		if got := insertSuffix(in[0], in[1]); got != want {
@@ -309,10 +309,10 @@ func mustParseTime(s string) time.Time {
 // straight from the four spellings users / GitHub mix interchangeably.
 func TestNormalizeTagStripsV(t *testing.T) {
 	cases := map[string]string{
-		"":          "",
-		"0.1.0":     "0.1.0",
-		"v0.1.0":    "0.1.0",
-		"v0.1.0-dev": "0.1.0-dev",
+		"":               "",
+		"0.1.0":          "0.1.0",
+		"v0.1.0":         "0.1.0",
+		"v0.1.0-dev":     "0.1.0-dev",
 		"v1.2.3+meta.42": "1.2.3-meta.42",
 	}
 	for in, want := range cases {
@@ -357,10 +357,10 @@ func TestUpgradeCommandPerInstall(t *testing.T) {
 func TestDetectInstall(t *testing.T) {
 	cases := map[string]string{
 		"/home/u/.npm/lib/node_modules/@tapeai/tape/bin/tape": "npm",
-		"/home/u/node_modules/.bin/tape":                       "npm",
-		"/opt/homebrew/bin/tape":                               "homebrew",
-		"/usr/local/Cellar/tape/0.1/bin/tape":                  "homebrew",
-		"/random/path/tape":                                    "manual",
+		"/home/u/node_modules/.bin/tape":                      "npm",
+		"/opt/homebrew/bin/tape":                              "homebrew",
+		"/usr/local/Cellar/tape/0.1/bin/tape":                 "homebrew",
+		"/random/path/tape":                                   "manual",
 	}
 	for path, want := range cases {
 		if got := detectInstall(path); got != want {

@@ -246,8 +246,8 @@ type eventParams struct {
 // and by user_input / ToolResult.output when they aren't plain strings.
 type contentPart struct {
 	Type     string         `json:"type"`
-	Text     string         `json:"text"`     // type=text
-	Think    string         `json:"think"`    // type=think
+	Text     string         `json:"text"`  // type=text
+	Think    string         `json:"think"` // type=think
 	ImageURL map[string]any `json:"image_url"`
 	AudioURL map[string]any `json:"audio_url"`
 	VideoURL map[string]any `json:"video_url"`

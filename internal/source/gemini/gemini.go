@@ -5,17 +5,19 @@
 //
 //   - First line is a metadata object: {"sessionId":..., "projectHash":...,
 //     "startTime":..., "kind":..., "directories": [...], ...}.
+//
 //   - Subsequent lines are MessageRecord objects keyed by `id`:
 //
 //     {"id":"m1","type":"user"|"gemini",
-//      "content": <string | PartListUnion>,   // gemini Part = {text}|{functionCall}|{functionResponse}|{thought}
-//      "displayContent": <PartListUnion>,
-//      "model":"gemini-2.5-pro",
-//      "toolCalls":[{"id","name","args","result","status","displayName",...}],
-//      "thoughts":[{"subject","description"}],
-//      "tokens":{"input","output","total","cached","thoughts","tool"} }
+//     "content": <string | PartListUnion>,   // gemini Part = {text}|{functionCall}|{functionResponse}|{thought}
+//     "displayContent": <PartListUnion>,
+//     "model":"gemini-2.5-pro",
+//     "toolCalls":[{"id","name","args","result","status","displayName",...}],
+//     "thoughts":[{"subject","description"}],
+//     "tokens":{"input","output","total","cached","thoughts","tool"} }
 //
 //   - Metadata patches look like {"$set":{"summary":"..."}}.
+//
 //   - Rewind markers look like {"$rewindTo":"<message-id>"} and truncate
 //     history up to that record. We honor them on read.
 //

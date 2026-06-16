@@ -27,9 +27,9 @@ type versionInfo struct {
 	// $GOBIN / $GOPATH/bin, "homebrew" if under /opt/homebrew or
 	// linuxbrew prefixes, else "manual" (raw download / make build).
 	// Drives `tape update`'s suggestion.
-	Install  string `json:"install"`
-	Path     string `json:"path,omitempty"`
-	HomeDir  string `json:"tape_home"`
+	Install string `json:"install"`
+	Path    string `json:"path,omitempty"`
+	HomeDir string `json:"tape_home"`
 }
 
 // collectVersion runs once and is safe to call from anywhere; it

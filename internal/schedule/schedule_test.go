@@ -51,15 +51,15 @@ func TestIntervalOrDefault(t *testing.T) {
 // TestShellQuoteCoversPosixCorners pins the shape of the strings
 // we hand systemd/launchd. Bare safe strings pass through; anything
 // with spaces or shell-meaningful chars wraps in single quotes and
-// escapes existing single quotes via the classic '\'' trick.
+// escapes existing single quotes via the classic '\” trick.
 func TestShellQuoteCoversPosixCorners(t *testing.T) {
 	cases := map[string]string{
-		"":                     "''",
-		"tape":                 "tape",
-		"/usr/local/bin/tape":  "/usr/local/bin/tape",
-		"with space":           "'with space'",
-		`already'quoted`:       `'already'\''quoted'`,
-		`shell$danger`:         `'shell$danger'`,
+		"":                    "''",
+		"tape":                "tape",
+		"/usr/local/bin/tape": "/usr/local/bin/tape",
+		"with space":          "'with space'",
+		`already'quoted`:      `'already'\''quoted'`,
+		`shell$danger`:        `'shell$danger'`,
 	}
 	for in, want := range cases {
 		if got := shellQuote(in); got != want {
@@ -168,10 +168,10 @@ func TestLaunchdPlistShape(t *testing.T) {
 	for _, want := range []string{
 		"<key>Label</key>",
 		"<string>com.tapeai.sync</string>",
-		"<integer>1800</integer>",   // 30 minutes
+		"<integer>1800</integer>", // 30 minutes
 		"<string>/opt/tape</string>",
 		"<string>--remote</string>",
-		"&lt;&amp;&gt;",             // XML-escaped
+		"&lt;&amp;&gt;", // XML-escaped
 	} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("plist missing %q:\n%s", want, data)

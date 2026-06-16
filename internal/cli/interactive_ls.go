@@ -203,7 +203,7 @@ func resumeCmdline(sess *model.Session) string {
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single
-// quotes the POSIX way ('\''). Used when building remote ssh commands
+// quotes the POSIX way ('\”). Used when building remote ssh commands
 // so a cwd with spaces or odd characters survives the round trip.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

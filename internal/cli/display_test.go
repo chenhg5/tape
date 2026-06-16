@@ -112,9 +112,9 @@ func TestPaddingComposesWithColor(t *testing.T) {
 
 func TestStripANSIAndVisibleWidth(t *testing.T) {
 	cases := []struct {
-		in    string
-		want  string
-		visW  int
+		in   string
+		want string
+		visW int
 	}{
 		// SGR foreground + reset:
 		{"\x1b[36mhello\x1b[0m", "hello", 5},

@@ -121,9 +121,9 @@ type contentBlock struct {
 }
 
 type part struct {
-	Text             string          `json:"text"`
-	FunctionCall     *functionCall   `json:"functionCall"`
-	FunctionResponse *functionResp   `json:"functionResponse"`
+	Text             string        `json:"text"`
+	FunctionCall     *functionCall `json:"functionCall"`
+	FunctionResponse *functionResp `json:"functionResponse"`
 }
 
 type functionCall struct {

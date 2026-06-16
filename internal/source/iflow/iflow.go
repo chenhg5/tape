@@ -22,9 +22,9 @@ import (
 const agentName = "iflow"
 
 type Source struct {
-	root  string                 // ~/.iflow
-	inner *gemini.Source         // does the heavy lifting via shared schema
-	rooted map[string]struct{}   // pinned roots so List doesn't escape
+	root   string              // ~/.iflow
+	inner  *gemini.Source      // does the heavy lifting via shared schema
+	rooted map[string]struct{} // pinned roots so List doesn't escape
 }
 
 func New(home string) *Source {

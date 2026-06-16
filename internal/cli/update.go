@@ -184,8 +184,8 @@ command/mirror for scripts.`,
 			}
 			if command == "" {
 				return cliError{
-					Type:    "update_failed",
-					Message: "cannot detect how tape was installed; upgrade manually",
+					Type:       "update_failed",
+					Message:    "cannot detect how tape was installed; upgrade manually",
 					Suggestion: "see " + rel.HTMLURL,
 				}
 			}
