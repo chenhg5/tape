@@ -1,6 +1,13 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/chenhg5/tape/internal/core/model"
+	"github.com/chenhg5/tape/internal/oplog"
 )
 
 func TestParseSince(t *testing.T) {
@@ -505,5 +513,307 @@ func TestRedactArtifactKeepLengthForDB(t *testing.T) {
 	}
 	if string(masked) == string(dbBytes) {
 		t.Error(".db path: secret survived in-place masking")
+	}
+}
+
+func TestIsCobraUsage(t *testing.T) {
+	cases := map[string]bool{
+		"unknown command \"foo\" for \"tape\"":    true,
+		"accepts 1 arg(s), received 0":            true,
+		"requires at least 1 arg":                 true,
+		"unknown shorthand flag: 'x' in -x":       true,
+		"some other failure":                      false,
+		"this happens to mention unknown command": false, // must be prefix
+	}
+	for msg, want := range cases {
+		if got := isCobraUsage(errors.New(msg)); got != want {
+			t.Errorf("isCobraUsage(%q) = %v, want %v", msg, got, want)
+		}
+	}
+}
+
+func TestEmitJSONShape(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = saved }()
+
+	done := make(chan struct{})
+	var buf bytes.Buffer
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+
+	if err := emitJSON(map[string]any{"hello": "world", "n": 3}); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	<-done
+
+	var got struct {
+		SchemaVersion int            `json:"schema_version"`
+		Data          map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("emitJSON output not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.SchemaVersion != schemaVersion {
+		t.Errorf("schema_version = %d, want %d", got.SchemaVersion, schemaVersion)
+	}
+	if got.Data["hello"] != "world" {
+		t.Errorf("payload not round-tripped: %+v", got.Data)
+	}
+}
+
+func TestHumanSize(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{1024 * 1024, "1.0 MiB"},
+		{1024 * 1024 * 1024, "1.0 GiB"},
+	}
+	for _, c := range cases {
+		if got := humanSize(c.in); got != c.want {
+			t.Errorf("humanSize(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestFormatValue(t *testing.T) {
+	if got := formatValue(nil); got != "" {
+		t.Errorf("nil: got %q, want empty", got)
+	}
+	if got := formatValue("hello"); got != "hello" {
+		t.Errorf("scalar: got %q", got)
+	}
+	// Slices are sorted and comma-joined inside [...] so config get / set
+	// round-trip cleanly without the user seeing Go's default [a b c].
+	if got := formatValue([]string{"b", "a", "c"}); got != "[a, b, c]" {
+		t.Errorf("slice: got %q, want [a, b, c]", got)
+	}
+	if got := formatValue([]string{}); got != "[]" {
+		t.Errorf("empty slice: got %q, want []", got)
+	}
+}
+
+func TestSortedKeysAndCountKeys(t *testing.T) {
+	got := sortedKeys(map[string]string{"b": "x", "a": "y", "c": "z"})
+	want := []string{"a", "b", "c"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("sortedKeys = %v, want %v", got, want)
+	}
+	gotc := sortedCountKeys(map[string]int{"z": 1, "a": 2})
+	if strings.Join(gotc, ",") != "a,z" {
+		t.Errorf("sortedCountKeys = %v", gotc)
+	}
+}
+
+func TestSummarizeRecord(t *testing.T) {
+	r := oplog.Record{
+		Scope:  map[string]string{"agent": "claude-code", "host": ""},
+		Counts: map[string]int{"sessions": 12, "files": 47},
+		Bytes:  2048,
+	}
+	got := summarizeRecord(r)
+	if !strings.Contains(got, "agent=claude-code") {
+		t.Errorf("missing scope: %q", got)
+	}
+	if strings.Contains(got, "host=") {
+		t.Errorf("empty scope value leaked: %q", got)
+	}
+	if !strings.Contains(got, "files=47") || !strings.Contains(got, "sessions=12") {
+		t.Errorf("missing counts: %q", got)
+	}
+	if !strings.Contains(got, "2.0 KiB") {
+		t.Errorf("missing bytes: %q", got)
+	}
+}
+
+func TestResolveHomePriority(t *testing.T) {
+	saved := map[string]string{
+		"TAPE_HOME": os.Getenv("TAPE_HOME"),
+		"TAPE_DIR":  os.Getenv("TAPE_DIR"),
+	}
+	defer func() {
+		for k, v := range saved {
+			if v == "" {
+				os.Unsetenv(k)
+			} else {
+				os.Setenv(k, v)
+			}
+		}
+	}()
+
+	// 1. TAPE_HOME wins outright.
+	os.Setenv("TAPE_HOME", "/tmp/tape-home")
+	os.Setenv("TAPE_DIR", "/tmp/tape-dir")
+	if got := resolveHome(); got != "/tmp/tape-home" {
+		t.Errorf("TAPE_HOME priority: got %q", got)
+	}
+
+	// 2. TAPE_DIR is the backward-compat fallback.
+	os.Unsetenv("TAPE_HOME")
+	if got := resolveHome(); got != "/tmp/tape-dir" {
+		t.Errorf("TAPE_DIR fallback: got %q", got)
+	}
+
+	// 3. Default to ~/.tape when neither is set.
+	os.Unsetenv("TAPE_DIR")
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".tape")
+	if got := resolveHome(); got != want {
+		t.Errorf("default: got %q, want %q", got, want)
+	}
+}
+
+func TestDefaultsRecoversFromBrokenConfig(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write garbage into config.json so Load() returns an error;
+	// Defaults() must still return a usable zero value rather than crash.
+	if err := os.WriteFile(filepath.Join(home, "config.json"), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{home: home}
+	_ = app.Defaults() // must not panic on broken config.
+	_ = app.Defaults() // second call hits the cached fast path.
+}
+
+func TestRecordedRunSetters(t *testing.T) {
+	r := startRun(&App{}, "test-op")
+	if r.op != "test-op" || r.scope == nil || r.counts == nil {
+		t.Fatalf("startRun did not initialise: %+v", r)
+	}
+	// Empty scope value is dropped (see summarizeRecord behavior).
+	r.setScope("agent", "")
+	if _, ok := r.scope["agent"]; ok {
+		t.Errorf("empty scope value should be dropped")
+	}
+	r.setScope("agent", "claude-code")
+	r.setCount("sessions", 7)
+	r.setBytes(2048)
+	if r.scope["agent"] != "claude-code" || r.counts["sessions"] != 7 || r.bytes != 2048 {
+		t.Errorf("setters not persisted: %+v", r)
+	}
+}
+
+func TestRenderHistoryRendersOneRow(t *testing.T) {
+	var buf bytes.Buffer
+	saved := os.Stdout
+	rd, wr, _ := os.Pipe()
+	os.Stdout = wr
+	renderHistory(&App{}, []oplog.Record{{
+		Op:       "sync",
+		Started:  time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+		Finished: time.Date(2026, 6, 15, 12, 0, 5, 0, time.UTC),
+		Duration: "5s",
+		Counts:   map[string]int{"sessions": 3},
+	}})
+	wr.Close()
+	io.Copy(&buf, rd)
+	os.Stdout = saved
+	if !strings.Contains(buf.String(), "sync") {
+		t.Errorf("renderHistory missing op name: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "sessions=3") {
+		t.Errorf("renderHistory missing summary: %q", buf.String())
+	}
+}
+
+func TestAppIndexCloseRoundtrip(t *testing.T) {
+	app := &App{home: t.TempDir()}
+	ix, err := app.Index()
+	if err != nil {
+		t.Fatalf("Index() open: %v", err)
+	}
+	if ix == nil {
+		t.Fatal("Index() returned nil")
+	}
+	// Second call must return the cached instance, not reopen.
+	ix2, err := app.Index()
+	if err != nil || ix2 != ix {
+		t.Errorf("Index() did not cache: %v %v", ix, ix2)
+	}
+	// Close on a nil-archive App must be a no-op; we don't open it here.
+	app.Close()
+}
+
+func TestResolveSessionIDLastOnEmptyArchive(t *testing.T) {
+	app := &App{home: t.TempDir()}
+	_, err := app.resolveSessionID(context.Background(), "@last")
+	if !errors.Is(err, ErrNoResults) {
+		t.Errorf("@last on empty archive: want ErrNoResults, got %v", err)
+	}
+}
+
+func TestArchiveDirIsHomeRelative(t *testing.T) {
+	app := &App{home: "/tmp/fake-home"}
+	want := filepath.Join("/tmp/fake-home", "archive")
+	if got := app.archiveDir(); got != want {
+		t.Errorf("archiveDir = %q, want %q", got, want)
+	}
+}
+
+func TestCollectVersionPopulatesPlatformFields(t *testing.T) {
+	info := collectVersion(&App{Version: "0.9.9-test", home: "/tmp/fake-home"})
+	if info.Version != "0.9.9-test" {
+		t.Errorf("Version not propagated: %q", info.Version)
+	}
+	if info.Go == "" || info.OS == "" || info.Arch == "" {
+		t.Errorf("runtime fields blank: %+v", info)
+	}
+	if info.HomeDir != "/tmp/fake-home" {
+		t.Errorf("HomeDir not propagated: %q", info.HomeDir)
+	}
+	// Install is always set (worst case "manual") so json consumers
+	// never have to special-case the empty string.
+	if info.Install == "" {
+		t.Errorf("Install must always be classified, got empty")
+	}
+}
+
+func TestInstallLabel(t *testing.T) {
+	cases := map[string]string{
+		"npm":         "npm (@tapeai/tape)",
+		"go-install":  "go install",
+		"homebrew":    "homebrew",
+		"manual":      "manual / system binary",
+		"never-heard": "unknown",
+	}
+	for in, want := range cases {
+		if got := installLabel(in); got != want {
+			t.Errorf("installLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRenderHistoryEmptyDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("renderHistory panicked on nil: %v", r)
+		}
+	}()
+	renderHistory(&App{}, nil)
+}
+
+func TestSummarizeRecordOmitsZeroBytes(t *testing.T) {
+	got := summarizeRecord(oplog.Record{
+		Scope:  map[string]string{"agent": "cc"},
+		Counts: map[string]int{"sessions": 1},
+		Bytes:  0,
+	})
+	if strings.Contains(got, "B") {
+		t.Errorf("zero bytes should not render a size: %q", got)
 	}
 }
