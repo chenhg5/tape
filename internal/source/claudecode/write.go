@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chenhg5/tape/internal/core/model"
+	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/source/internal/scan"
 )
 
@@ -17,14 +18,14 @@ import (
 // resumed with `claude --resume`. Best-effort by design: text dialogue is
 // carried over; tool traffic is not replayed (Claude has no matching tool
 // state anyway). Implements ports.SessionWriter.
-func (s *Source) Write(ctx context.Context, sess *model.Session) (string, error) {
+func (s *Source) Write(ctx context.Context, sess *model.Session) (ports.WriteResult, error) {
 	cwd := sess.CWD
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
 	dir := filepath.Join(s.dir, projectDirName(cwd))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+		return ports.WriteResult{}, err
 	}
 	id := scan.UUIDv4()
 	path := filepath.Join(dir, id+".jsonl")
@@ -69,14 +70,17 @@ func (s *Source) Write(ctx context.Context, sess *model.Session) (string, error)
 			"timestamp":   ts.Format(time.RFC3339Nano),
 		}
 		if err := enc.Encode(line); err != nil {
-			return "", err
+			return ports.WriteResult{}, err
 		}
 		parent = uuid
 	}
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
-		return "", err
+		return ports.WriteResult{}, err
 	}
-	return fmt.Sprintf("cd %s && claude --resume %s", cwd, id), nil
+	return ports.WriteResult{
+		ResumeCommand: fmt.Sprintf("cd %s && claude --resume %s", cwd, id),
+		TargetFile:    path,
+	}, nil
 }
 
 func nullable(s string) any {

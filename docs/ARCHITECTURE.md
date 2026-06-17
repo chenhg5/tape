@@ -84,6 +84,32 @@ Tape 把这些会话当作**用户拥有的、第一公民的数据资产**来�
 
 命令:`tape export`、`tape export snapshot.tar.gz --compress gzip --agent codex --since 7d`、`tape export --scan-only`。
 
+### 2.3.1 Share / Import(跨机分享)— v0.3.0 新增
+
+Export 的两条独立子能力:**备份** (`tape export`) 和 **分享** (`tape share` / `tape import`)。两者复用同一套 snapshot 写盘逻辑,但 share 路径多了一层 **bundle manifest**(`tape-bundle.json`,bundle 根目录),让对端 import 时不必先解包整个归档就能做路由决策。
+
+```
+机器 A                                  机器 B
+─────                                  ─────
+tape share <id> -o bundle.tar.zst  →   tape import bundle.tar.zst
+  ├ archive 读出指定 session              ├ 解压到 ~/.tape/.import-staging/<uuid>/
+  ├ 写 snapshot(同 export)               ├ 读 tape-bundle.json(或 layout fallback)
+  └ 写 tape-bundle.json                  ├ 对每个 session 检测冲突
+                                         ├ 应用 --on-conflict 4 策略
+                                         ├ 原子 rename → archive
+                                         └ upsert sqlitefts 索引
+```
+
+设计要点:
+
+- **Manifest schema** (`internal/export/bundle`): `schema_version` 单调递增;reader 见到不认识的 version 拒绝(不静默丢字段);v0.2.0 老 bundle 没 manifest,import 路径自动回退扫 `<agent>/<project>/<sid>/` layout,保证旧备份永远能吃。
+- **冲突策略**:`--on-conflict skip|overwrite|rename|prompt`(TTY 默认 prompt,非 TTY 默认 skip)。checksum 完全相同永远静默 skip(同一 bundle 重复 import 是幂等的)。
+- **原子性**:所有 session 先全部落到 staging 目录,全成功才批量 rename 进 archive;任何一步失败就 `rm -rf` 整个 stage,既有 archive 一字节不动。Index upsert 放在 rename 之后,保证 FTS 不会指向不存在的文件。
+- **跨机 cwd**:`--rewrite-cwd <new>` 一次性改写所有 import session 的 cwd 并重算 `project_slug`;`tape restore` 自身也有 fallback:目标 cwd 在本机不存在时,自动改为当前 `pwd`(per-restore,不修改 archive)。
+- **Exit code 4**:非 TTY 下默认 skip 但确实跳过了至少一条非幂等 session 时,以 4 退出(区别于通用 error=1),便于 CI 脚本分支处理"需要人介入"。
+
+命令:`tape share <id> [<id>...]`、`tape import <bundle> [--on-conflict X --rewrite-cwd Y]`。详见 [SHARING.md](SHARING.md)。
+
 ### 2.4 Memory(记忆提取)
 
 - 从归档会话中提炼结构化记忆:决策(含被否定的方案)、偏好、约束、待办、已知问题;

@@ -160,6 +160,13 @@ func TestExportFilters(t *testing.T) {
 				t.Fatalf("--agent %s changed_files = %v", agentInput, res["changed_files"])
 			}
 			if err := walkTarZst(out, func(name string) error {
+				// v0.3.0+ stamps tape-bundle.json at the root of every
+				// export bundle for the import side to consume; it's
+				// not a session payload so the agent-filter check
+				// doesn't apply.
+				if name == "tape-bundle.json" {
+					return nil
+				}
 				if !strings.HasPrefix(name, "codex/") {
 					return fmt.Errorf("non-codex member leaked into --agent %s export: %s", agentInput, name)
 				}

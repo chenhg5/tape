@@ -86,3 +86,11 @@ func (s *Source) List(ctx context.Context, since time.Time) ([]ports.SessionRef,
 func (s *Source) Load(ctx context.Context, ref ports.SessionRef) (*model.Session, error) {
 	return s.inner.Load(ctx, ref)
 }
+
+// Write forwards to opencode's writer, which is schema-compatible with
+// MiMo Code. The inner source was constructed with our agent label, so
+// the resume hint it returns uses `mimo` rather than `opencode`.
+// Implements ports.SessionWriter.
+func (s *Source) Write(ctx context.Context, sess *model.Session) (ports.WriteResult, error) {
+	return s.inner.Write(ctx, sess)
+}

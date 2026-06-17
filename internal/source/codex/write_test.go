@@ -20,12 +20,15 @@ func TestWriteReadBack(t *testing.T) {
 			{Role: model.RoleAssistant, Text: "已完成,见 auth/jwt.go"},
 		},
 	}
-	resumeCmd, err := s.Write(ctx, in)
+	res, err := s.Write(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(resumeCmd, "codex resume ") {
-		t.Errorf("resume cmd = %q", resumeCmd)
+	if res.TargetFile == "" {
+		t.Error("WriteResult.TargetFile should be set")
+	}
+	if !strings.Contains(res.ResumeCommand, "codex resume ") {
+		t.Errorf("resume cmd = %q", res.ResumeCommand)
 	}
 	refs, err := s.List(ctx, time.Time{})
 	if err != nil || len(refs) != 1 {

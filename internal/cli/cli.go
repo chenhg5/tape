@@ -42,14 +42,27 @@ const (
 	ExitError     = 1
 	ExitUsage     = 2
 	ExitNoResults = 3
+	// ExitConflicts: a multi-item operation (today: `tape import`)
+	// finished but some items were left unmerged because a conflict
+	// could not be resolved automatically (default on non-TTY).
+	// Distinct from ExitError so CI scripts can branch on
+	// "needs human" without losing the "succeeded for the rest" signal.
+	ExitConflicts = 4
 	ExitDryRunOK  = 10
 )
+
+// ErrImportConflicts is returned from `tape import` when one or more
+// sessions in the bundle were skipped because we couldn't resolve the
+// conflict automatically. Wrapping with cliError + errors.Is keeps the
+// human-facing message customizable while still mapping to exit code 4.
+var ErrImportConflicts = errors.New("import: unresolved conflicts")
 
 const exitCodeHelp = `Exit codes:
   0  success
   1  error
   2  usage error
   3  no results / not found
+  4  import finished with unresolved conflicts
   10 dry run succeeded (safe to run without --dry-run)`
 
 // usageTemplate mirrors cobra's default but moves Examples after Flags so
@@ -242,6 +255,7 @@ you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 	root.AddCommand(
 		newSyncCmd(app), newLsCmd(app), newSearchCmd(app), newShowCmd(app),
 		newOverviewCmd(app), newExportCmd(app), newRestoreCmd(app),
+		newShareCmd(app), newImportCmd(app),
 		newIndexCmd(app), newSchemaCmd(app, root),
 		newVersionCmd(app), newUpdateCmd(app),
 		newCompletionCmd(app), newHistoryCmd(app), newConfigCmd(app),
@@ -255,6 +269,14 @@ you own. Output is human-readable on a TTY and JSON when piped (or with --json).
 		return ExitOK
 	case errors.Is(err, errDryRun):
 		return ExitDryRunOK
+	case errors.Is(err, ErrImportConflicts):
+		var ce cliError
+		if errors.As(err, &ce) {
+			app.reportError(ce)
+		} else {
+			app.reportError(cliError{Type: "import_conflicts", Message: err.Error()})
+		}
+		return ExitConflicts
 	case errors.Is(err, ErrNoResults):
 		// Honor any cliError Suggestion the caller attached (see
 		// noResultsHint / cliError.Is) so commands can explain *why*

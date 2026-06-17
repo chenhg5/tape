@@ -5,6 +5,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/chenhg5/tape/internal/core/model"
@@ -162,6 +163,23 @@ type ExportOpts struct {
 	RedactCopy func(path string, data []byte) []byte
 	// OnProgress fires per file written. total may be -1 when unknown.
 	OnProgress func(done, total int64, path string)
+	// ExtraFiles are synthetic entries injected into the artifact at
+	// fixed bundle-relative paths (e.g. tape-bundle.json). Written
+	// last so manifest content reflects the actual set of session
+	// files we wrote. RedactCopy is NOT applied — these are tape-
+	// generated metadata files that intentionally carry e.g. host
+	// names; the caller is in control.
+	ExtraFiles []ExtraFile
+}
+
+// ExtraFile is one synthetic entry to inject into the artifact.
+// RelPath is the bundle-relative slash-separated path (e.g.
+// "tape-bundle.json"); Data is the literal bytes to write; ModTime
+// is used for the entry header (zero ⇒ now).
+type ExtraFile struct {
+	RelPath string
+	Data    []byte
+	ModTime time.Time
 }
 
 // ExportResult is what the CLI prints after a successful export, plus
@@ -177,8 +195,33 @@ type ExportResult struct {
 
 // SessionWriter is implemented by sources that can also write a session in
 // their native format, enabling native cross-agent restore.
+//
+// The WriteResult carries both the resume command (what the user runs)
+// and the on-disk artifact (`TargetFile` — the JSONL, SQLite DB or
+// markdown file that was created). The latter is what `tape restore
+// --inspect` surfaces and what JSON-mode emits to scripts that need to
+// chain further actions (e.g. validate the file, encrypt it, ship it).
 type SessionWriter interface {
-	// Write materializes s as a new session in this agent's storage and
-	// returns the command the user runs to resume it.
-	Write(ctx context.Context, s *model.Session) (resumeCmd string, err error)
+	Write(ctx context.Context, s *model.Session) (WriteResult, error)
 }
+
+// WriteResult is the output of a native session write.
+type WriteResult struct {
+	// ResumeCommand is the shell line a human runs to drop back into
+	// the restored session. May span `cd <dir> && <agent> [flags]`.
+	ResumeCommand string
+	// TargetFile is the absolute path of the primary file written —
+	// the JSONL transcript, the SQLite store, or the markdown chat
+	// history, depending on the source. Empty when the writer can't
+	// settle on a single file (rare; only when it touches several).
+	TargetFile string
+}
+
+// ErrNativeUnsupported is the sentinel a SessionWriter returns when the
+// host environment can't safely accept a native write at the moment —
+// most commonly because the target agent hasn't been installed (no DB
+// to write into) or because its on-disk schema is a version we don't
+// understand. The restore CLI catches this and falls back to a
+// lower-fidelity strategy (memory / transcript) with a clear message,
+// instead of either crashing or corrupting an unfamiliar database.
+var ErrNativeUnsupported = errors.New("native restore unsupported in current environment")

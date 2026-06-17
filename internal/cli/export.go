@@ -18,6 +18,7 @@ import (
 	"github.com/chenhg5/tape/internal/agentid"
 	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
+	"github.com/chenhg5/tape/internal/export/bundle"
 	"github.com/chenhg5/tape/internal/export/snapshot"
 	"github.com/chenhg5/tape/internal/redact"
 )
@@ -42,6 +43,7 @@ func newExportCmd(app *App) *cobra.Command {
 		splitBy, splitSize                    string
 		jobs                                  int
 		noRedact, dryRun, scanOnly            bool
+		sessionSel, kindFlag                  string
 	)
 	cmd := &cobra.Command{
 		Use:   "export [output]",
@@ -154,8 +156,27 @@ resulting files exactly where it left them.`,
 				return runExportScan(cmd, app, filter)
 			}
 
+			// --session resolves into KeepIDs the same way the
+			// chunked path uses them. Doing it here means filter
+			// still applies as an upper bound (`--session @last
+			// --agent codex` would refuse a mismatch), and the
+			// manifest below sees the same set we ship.
+			keepIDs, err := resolveSessionSelectors(cmd, app, sessionSel)
+			if err != nil {
+				return err
+			}
+
+			// Default to "share" when --session is given, otherwise
+			// "backup". Normalize "share" / "backup" only — anything
+			// else trips the validator.
+			kind, err := normalizeBundleKind(kindFlag, len(keepIDs) > 0)
+			if err != nil {
+				return err
+			}
+			run.setScope("kind", string(kind))
+
 			if output == "" {
-				output = snapshot.DefaultFilename(format, compress, time.Now())
+				output = chooseExportFilename(format, compress, kind, keepIDs, time.Now())
 			}
 
 			split, err := parseSplit(splitBy, splitSize)
@@ -169,9 +190,31 @@ resulting files exactly where it left them.`,
 				Format:     format,
 				Compress:   compress,
 				DryRun:     dryRun,
+				KeepIDs:    keepIDs,
 			}
 			if !noRedact {
 				opts.RedactCopy = redactArtifact
+			}
+
+			// Manifest: built off the resolved session set so
+			// importers can read it without unpacking archive
+			// payloads. Skipped only for --dry-run (no point
+			// stamping a manifest we won't ship) and for chunked
+			// exports (each chunk needs its own row subset; the
+			// chunked branch wires that up itself).
+			if !dryRun && splitBy == "" {
+				extra, sessionCount, err := buildBundleManifest(cmd, app, opts, kind)
+				if err != nil {
+					return err
+				}
+				// Only stamp the manifest if there's something to
+				// manifest — an empty bundle (e.g. --since=9999) is
+				// indistinguishable from "user wanted nothing", and
+				// the extra synthetic file would mis-count
+				// changed_files=1 for the dry-run / verifier paths.
+				if sessionCount > 0 {
+					opts.ExtraFiles = append(opts.ExtraFiles, extra)
+				}
 			}
 
 			if split.mode == splitNone {
@@ -203,7 +246,141 @@ resulting files exactly where it left them.`,
 	cmd.Flags().BoolVar(&noRedact, "no-redact", false, "keep secrets verbatim in the artifact")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writing (exit 10 on success)")
 	cmd.Flags().BoolVar(&scanOnly, "scan-only", false, "list secrets that would be redacted, write nothing")
+	cmd.Flags().StringVar(&sessionSel, "session", "", "comma-separated session ids/prefixes/@last to share (implies --kind=share)")
+	cmd.Flags().StringVar(&kindFlag, "kind", "", "bundle intent: share (lean, kept fields) | backup (everything; default)")
 	return cmd
+}
+
+// resolveSessionSelectors expands a comma-separated list of session
+// ids (full canonical "agent/source-id", short prefix, or `@last`)
+// into canonical ids the export pipeline already knows how to filter.
+// Returns nil when sel is empty — caller falls back to the wider
+// Filter-based selection.
+func resolveSessionSelectors(cmd *cobra.Command, app *App, sel string) ([]string, error) {
+	sel = strings.TrimSpace(sel)
+	if sel == "" {
+		return nil, nil
+	}
+	parts := strings.Split(sel, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, raw := range parts {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		full, err := app.resolveSessionID(cmd.Context(), raw)
+		if err != nil {
+			return nil, usageErrf("--session %q: %v", raw, err)
+		}
+		if seen[full] {
+			continue
+		}
+		seen[full] = true
+		out = append(out, full)
+	}
+	if len(out) == 0 {
+		return nil, usageErrf("--session %q matched zero sessions", sel)
+	}
+	return out, nil
+}
+
+// normalizeBundleKind picks the right bundle.Kind given the explicit
+// --kind flag and whether the user asked for a session-scoped export
+// (--session). Default precedence:
+//
+//   - --kind set explicitly → honored
+//   - --session given       → "share"
+//   - otherwise             → "backup"
+func normalizeBundleKind(flag string, hasSessionFlag bool) (bundle.Kind, error) {
+	flag = strings.TrimSpace(strings.ToLower(flag))
+	switch flag {
+	case "":
+		if hasSessionFlag {
+			return bundle.KindShare, nil
+		}
+		return bundle.KindBackup, nil
+	case "share":
+		return bundle.KindShare, nil
+	case "backup":
+		return bundle.KindBackup, nil
+	default:
+		return "", usageErrf("--kind %q: must be share or backup", flag)
+	}
+}
+
+// chooseExportFilename produces the default output filename. Share
+// bundles get a more specific stem ("tape-share-<agent>-<shortid>")
+// so a downloads folder full of them stays scannable.
+func chooseExportFilename(format, compress string, kind bundle.Kind, keepIDs []string, now time.Time) string {
+	if kind != bundle.KindShare {
+		return snapshot.DefaultFilename(format, compress, now)
+	}
+	ext := snapshot.Extension(format, compress)
+	stem := "tape-share-" + now.UTC().Format("20060102-150405")
+	if len(keepIDs) == 1 {
+		agent, sid, ok := strings.Cut(keepIDs[0], "/")
+		if ok {
+			stem = "tape-share-" + agent + "-" + shortID(sid)
+		}
+	} else if len(keepIDs) > 1 {
+		stem = fmt.Sprintf("tape-share-%dsessions-%s", len(keepIDs), now.UTC().Format("20060102-150405"))
+	}
+	return stem + "." + ext
+}
+
+// buildBundleManifest resolves the session set the export is about to
+// ship, materializes them as bundle.SessionRow entries, and serializes
+// the whole manifest into an ExtraFile suitable for ports.ExportOpts.
+//
+// We deliberately resolve the set right here (instead of inside
+// snapshot.Write) so the manifest is internally consistent — every
+// session listed actually appears as files in the archive entries.
+func buildBundleManifest(cmd *cobra.Command, app *App, opts ports.ExportOpts, kind bundle.Kind) (ports.ExtraFile, int, error) {
+	keepIDs := opts.KeepIDs
+	if len(keepIDs) == 0 {
+		sums, err := app.Archive().List(cmd.Context(), opts.Filter)
+		if err != nil {
+			return ports.ExtraFile{}, 0, err
+		}
+		keepIDs = make([]string, 0, len(sums))
+		for _, s := range sums {
+			keepIDs = append(keepIDs, s.ID)
+		}
+	}
+
+	host, _ := os.Hostname()
+	m := &bundle.Manifest{
+		Kind:        kind,
+		TapeVersion: app.Version,
+		Source:      bundle.SourceInfo{Host: host, TapeHome: app.home},
+		CreatedAt:   time.Now().UTC(),
+		Sessions:    make([]bundle.SessionRow, 0, len(keepIDs)),
+	}
+	for _, id := range keepIDs {
+		sess, err := app.Archive().Get(cmd.Context(), id)
+		if err != nil {
+			// Don't fail the whole export over one missing row;
+			// the manifest is best-effort metadata. Note the gap
+			// in the manifest so the importer doesn't think the
+			// payload is corrupt.
+			m.Sessions = append(m.Sessions, bundle.SessionRow{
+				ID: id, Title: "[unreadable: " + err.Error() + "]",
+			})
+			continue
+		}
+		m.Sessions = append(m.Sessions, bundle.RowFromSession(sess, ""))
+	}
+
+	var buf strings.Builder
+	if err := bundle.Write(&buf, m); err != nil {
+		return ports.ExtraFile{}, 0, err
+	}
+	return ports.ExtraFile{
+		RelPath: bundle.ManifestFilename,
+		Data:    []byte(buf.String()),
+		ModTime: m.CreatedAt,
+	}, len(m.Sessions), nil
 }
 
 // jobsToEncoderConcurrency derives the per-stream zstd worker count

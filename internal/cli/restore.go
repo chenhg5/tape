@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/chenhg5/tape/internal/agentid"
+	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/llm"
 	"github.com/chenhg5/tape/internal/restore"
@@ -28,7 +29,7 @@ func firstAgent(to string) string {
 
 func newRestoreCmd(app *App) *cobra.Command {
 	var to, strategy, output, llmName, dir string
-	var dryRun bool
+	var dryRun, inspect bool
 	cmd := &cobra.Command{
 		Use:     "restore [session-id]",
 		Aliases: []string{"rewind"},
@@ -186,22 +187,97 @@ Default strategy is native when the target supports it, memory otherwise.`,
 				return errDryRun
 			}
 
-			switch strategy {
-			case "native":
-				resumeCmd, err := writer.Write(cmd.Context(), sess)
-				if err != nil {
-					return err
+			// --inspect is a dry-run-plus: don't write anything, just tell
+			// the user *exactly* where the native writer would land and
+			// what command resumes it. The only way to be accurate is to
+			// actually inspect what the source plans to do, but every
+			// native writer is best-effort, so we approximate by
+			// describing the file the user *would* see.
+			if inspect {
+				if !canNative {
+					return usageErrf("agent %q has no native writer to inspect", to)
+				}
+				payload := map[string]any{
+					"strategy": "native", "target": to, "source": full,
+					"messages":   len(sess.Messages),
+					"cwd":        sess.CWD,
+					"would_call": fmt.Sprintf("%s.Source.Write(*model.Session)", to),
 				}
 				if app.useJSON() {
+					if err := emitJSON(payload); err != nil {
+						return err
+					}
+				} else {
+					app.lead()
+					fmt.Printf("%s --inspect: %s would write %s (%d msg, cwd=%s) natively.\n"+
+						"   (run without --inspect to actually materialize)\n",
+						app.gray("·"), app.agentColor(to), app.cyan(full),
+						len(sess.Messages), sess.CWD)
+				}
+				return errDryRun
+			}
+
+			// Cross-machine rewrite: if the session's recorded cwd doesn't
+			// exist on this box (typical of a session that was imported
+			// from another machine), point it at the user's current
+			// directory before handing it to the writer. Each writer's
+			// project-hash / slug calculation reads sess.CWD, so this
+			// automatically lands the restored session in a directory the
+			// agent will actually open on this machine.
+			if strategy == "native" && sess.CWD != "" {
+				if st, err := os.Stat(sess.CWD); err != nil || !st.IsDir() {
+					wd, _ := os.Getwd()
+					if wd != "" {
+						if !app.useJSON() {
+							app.lead()
+							fmt.Fprintf(os.Stderr,
+								"%s original cwd %s missing locally — restoring under %s instead.\n",
+								app.gray("·"), app.cyan(sess.CWD), app.cyan(wd))
+						}
+						sess.CWD = wd
+					}
+				}
+			}
+
+			switch strategy {
+			case "native":
+				result, werr := writer.Write(cmd.Context(), sess)
+				if werr != nil {
+					if errors.Is(werr, ports.ErrNativeUnsupported) {
+						// Fall back to memory: full fidelity, no LLM, agent
+						// auto-loads. Tell the user *why* we degraded so
+						// they can decide whether to install the agent.
+						if !app.useJSON() {
+							app.lead()
+							fmt.Fprintf(os.Stderr,
+								"%s native restore not available for %s (%v); falling back to --strategy memory.\n",
+								app.gray("·"), app.agentColor(to), werr)
+						}
+						strategy = "memory"
+						run.setScope("strategy", strategy)
+						return runMemoryRestore(cmd, app, sess, to, full, output)
+					}
+					return werr
+				}
+				// Stamp cwd / host into the source session metadata so
+				// downstream tooling (ls, search) can attribute the
+				// restored row even when sess.CWD was empty.
+				if app.useJSON() {
 					return emitJSON(map[string]any{
-						"strategy": "native", "target": to, "source": full, "resume_command": resumeCmd,
+						"strategy": "native", "target": to, "source": full,
+						"resume_command": result.ResumeCommand,
+						"target_file":    result.TargetFile,
 					})
 				}
 				app.lead()
-				fmt.Printf("%s restored %s as a native %s session.\n%s\n\n  %s\n",
-					app.green("✓"), app.cyan(full), app.agentColor(to),
+				fmt.Printf("%s restored %s as a native %s session.\n",
+					app.green("✓"), app.cyan(full), app.agentColor(to))
+				if result.TargetFile != "" {
+					fmt.Printf("  %s %s\n", app.gray("file:"), app.cyan(result.TargetFile))
+				}
+				fmt.Printf("%s\n\n  %s\n",
 					app.gray("Resume it with:"),
-					app.bold(resumeCmd))
+					app.bold(result.ResumeCommand))
 				return nil
 			case "transcript":
 				doc := restore.Transcript(sess)
@@ -222,40 +298,7 @@ Default strategy is native when the target supports it, memory otherwise.`,
 					app.bold(start))
 				return nil
 			case "memory":
-				doc := restore.Transcript(sess)
-				// projectRoot precedence:
-				//   1. dir(--output) when --output is absolute — the user
-				//      explicitly told us where to land
-				//   2. sess.CWD when that directory still exists on this
-				//      machine — usual case for "resume on same box"
-				//   3. current working directory — last-resort fallback,
-				//      keeps the command working in fresh environments
-				projectRoot := ""
-				if filepath.IsAbs(output) {
-					projectRoot = filepath.Dir(output)
-				} else if st, err := os.Stat(sess.CWD); err == nil && st.IsDir() {
-					projectRoot = sess.CWD
-				} else if wd, err := os.Getwd(); err == nil {
-					projectRoot = wd
-				}
-				handoffAbs, memAbs, err := restore.InjectMemory(projectRoot, to, output, doc)
-				if err != nil {
-					return err
-				}
-				if app.useJSON() {
-					return emitJSON(map[string]any{
-						"strategy": "memory", "target": to, "source": full,
-						"handoff_file": handoffAbs, "memory_file": memAbs,
-						"project_root": projectRoot,
-					})
-				}
-				app.lead()
-				fmt.Printf("%s transcript: %s\n%s memory:     %s\n%s\n\n  %s\n",
-					app.green("✓"), app.cyan(handoffAbs),
-					app.green("✓"), app.cyan(memAbs),
-					app.gray("Open the next agent inside "+projectRoot+"; it will auto-load the handoff."),
-					app.bold(startInProject(to, projectRoot)))
-				return nil
+				return runMemoryRestore(cmd, app, sess, to, full, output)
 			case "brief":
 				runner, err := llm.Pick(llmName)
 				if err != nil {
@@ -295,7 +338,51 @@ Default strategy is native when the target supports it, memory otherwise.`,
 	cmd.Flags().StringVar(&llmName, "llm", "auto", "summarizer for brief: auto|claude|codex|cursor|none")
 	cmd.Flags().StringVar(&dir, "dir", "", "scope the interactive menu to a project directory (default: cwd; pass \"\" for all)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the plan without writing (exit 10 on success)")
+	cmd.Flags().BoolVar(&inspect, "inspect", false, "preview where a native restore would land without writing (exit 10)")
 	return cmd
+}
+
+// runMemoryRestore writes a transcript and injects it into the target
+// agent's project memory (CLAUDE.md / AGENTS.md / …) so the agent
+// auto-loads the handoff on next launch in the project. Extracted so
+// the native branch can fall back to it cleanly when a source returns
+// ports.ErrNativeUnsupported.
+func runMemoryRestore(cmd *cobra.Command, app *App, sess *model.Session, to, full, output string) error {
+	doc := restore.Transcript(sess)
+	// projectRoot precedence:
+	//   1. dir(--output) when --output is absolute — the user
+	//      explicitly told us where to land
+	//   2. sess.CWD when that directory still exists on this
+	//      machine — usual case for "resume on same box"
+	//   3. current working directory — last-resort fallback,
+	//      keeps the command working in fresh environments
+	projectRoot := ""
+	if filepath.IsAbs(output) {
+		projectRoot = filepath.Dir(output)
+	} else if st, err := os.Stat(sess.CWD); err == nil && st.IsDir() {
+		projectRoot = sess.CWD
+	} else if wd, err := os.Getwd(); err == nil {
+		projectRoot = wd
+	}
+	handoffAbs, memAbs, err := restore.InjectMemory(projectRoot, to, output, doc)
+	if err != nil {
+		return err
+	}
+	if app.useJSON() {
+		return emitJSON(map[string]any{
+			"strategy": "memory", "target": to, "source": full,
+			"handoff_file": handoffAbs, "memory_file": memAbs,
+			"project_root": projectRoot,
+			"target_file":  memAbs,
+		})
+	}
+	app.lead()
+	fmt.Printf("%s transcript: %s\n%s memory:     %s\n%s\n\n  %s\n",
+		app.green("✓"), app.cyan(handoffAbs),
+		app.green("✓"), app.cyan(memAbs),
+		app.gray("Open the next agent inside "+projectRoot+"; it will auto-load the handoff."),
+		app.bold(startInProject(to, projectRoot)))
+	return nil
 }
 
 // agentLaunchBin returns the shell command used to start the named agent

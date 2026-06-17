@@ -39,6 +39,12 @@ restored claude-code/7dd2afaf as a native codex session.
 Resume it with:
 
   cd /root/code/demo && codex resume 019ebb66-899f-77cf-b66c-9009d4c5f09b
+
+$ tape share claude-code/7dd2afaf -o ./debug.tar.zst
+# ↑ on machine A, hand off the file to a teammate
+$ tape import ./debug.tar.zst
+imported 1 session(s); skipped 0; overwritten 0; renamed 0
+# ↑ on machine B, the session is now in `tape ls` and `tape restore`able
 ```
 
 ## Highlights
@@ -48,6 +54,7 @@ Resume it with:
 - **Search everything** — full-text search across all agents with BM25 ranking. CJK works: latin words *and* Chinese/Japanese/Korean bigrams are tokenized natively.
 - **Move between agents** — ran out of Claude tokens mid-task? `tape restore --to codex` rewrites the dialogue as a *native* session the target agent can `resume`.
 - **Export, don't lock in** — `tape export` ships the archive (or any filtered slice) as a single artifact in your choice of container/codec (`tar.zst`, `tar.gz`, `tar.xz`, `tar`, or `zip`). Secrets are redacted in stream. What you do with the file — git, S3, USB stick — is up to you.
+- **Share with humans** — `tape share <id>` packs one session into a self-describing bundle; `tape import <bundle>` on the other machine merges it atomically with conflict resolution and optional `--rewrite-cwd` for cross-machine paths. See [docs/SHARING.md](docs/SHARING.md).
 - **Built for agents, too** — JSON output when piped, semantic exit codes, machine-readable errors, `--dry-run` everywhere, and `tape schema` for command introspection.
 - **Single binary** — pure Go, no CGO, no runtime dependencies. Linux / macOS / Windows.
 

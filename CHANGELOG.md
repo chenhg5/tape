@@ -5,6 +5,126 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-06-17
+
+Cross-machine sharing and natural restore. Before v0.3.0 you could
+back up your archive (`tape export`) but importing it on another
+machine meant manually un-tarring it into `~/.tape/archive` — and
+"restore" landed sessions into the target agent by writing a memory
+file (`CLAUDE.md` / `AGENTS.md`) the agent then re-read at startup,
+which is the right fallback but felt intrusive when you wanted the
+session to look truly *native* on the other side.
+
+This release fixes both ends of that workflow.
+
+### Before / after
+
+**Before:** `tape restore claude-code/abc --to gemini` wrote a
+`tape-handoff.md` and printed a `cd ... && gemini` line; gemini would
+re-read the file on startup but the conversation history was visibly
+"a memory file the user dropped in", not a native session.
+
+**After:** the same command writes a real
+`~/.gemini/tmp/<project-hash>/session-abc.jsonl` that gemini's own
+loader picks up — the agent boots up *as if* the conversation had
+happened there in the first place. All 12 agents now have native
+writers (claude-code, codex, gemini, qwen, iflow, antigravity,
+kimicode, qoder, aider, mimo, opencode, cursor).
+
+---
+
+**Before:** to share a session with a teammate you had to send them a
+backup tarball; they ran `tar -xf ... -C ~/.tape/archive` by hand, and
+"are we overwriting anything?" was on them to check.
+
+**After:**
+
+```bash
+# machine A
+tape share claude-code/abc -o ./debug.tar.zst
+
+# machine B
+tape import ./debug.tar.zst
+# imported 1 session(s); skipped 0; overwritten 0; renamed 0
+```
+
+The import is atomic (stage in `~/.tape/.import-staging/<uuid>/`
+first, batch-rename only after the whole bundle is ready), has four
+conflict-resolution policies (`skip|overwrite|rename|prompt`), and
+supports `--rewrite-cwd` for "this teammate's `/Users/alice/code/proj`
+is my `/root/code/proj`".
+
+### Added
+
+- **`tape share <id>[,<id>...]`** — alias for `tape export --session
+  <id> --kind share`, with a friendlier default output path (`./`
+  instead of `~/.tape/exports/`).
+- **`tape import <bundle>`** — receive-side of share. Reads the new
+  `tape-bundle.json` manifest from the bundle root and routes each
+  session into the local archive. Bundles produced by tape <= 0.2.0
+  (no manifest) are still accepted: the importer falls back to
+  scanning the `<agent>/<project>/<sid>/` layout directly.
+  - `--on-conflict skip|overwrite|rename|prompt` (TTY default
+    prompt, non-TTY default skip).
+  - `--rewrite-cwd <path>` rewrites every imported session's recorded
+    cwd to `<path>` and recomputes the project_slug on the way in.
+  - `--dry-run` previews the plan without touching the archive
+    (exits 10).
+  - Exit code **4** is reserved for "import finished but at least one
+    session was skipped because of an unresolved conflict" — distinct
+    from generic error (1) so CI scripts can branch on "needs human".
+- **`tape restore --inspect`** — dry-run-plus: prints which native
+  file the writer *would* land and what resume command would unlock
+  it, without writing anything.
+- **Bundle manifest** (`internal/export/bundle`,
+  `tape-bundle.json`): schema_v1 metadata stamped at bundle root,
+  carrying `tape_version`, `kind` (share|backup), `source.host`,
+  `source.tape_home`, and per-session `{id, agent, source_id,
+  project_slug, original_cwd, title, msg_count, checksum, ...}`.
+- **`tape export --session <id>[,<id>] --kind share|backup`** — the
+  underlying primitive that `tape share` wraps.
+- **Native SessionWriter implementations for every supported agent.**
+  Replaces the old "fall back to memory file" path. Each writer
+  produces files in the exact format the agent's own session
+  reader expects (Drizzle SQLite for opencode/mimo, content-
+  addressed SQLite for cursor, project-hashed JSONL for the
+  Gemini family, JSON-RPC wire log for kimi-code, etc.).
+
+### Changed
+
+- **`tape restore --strategy auto`** now picks `native` on all 12
+  agents (was: claude-code + codex only). The remaining strategies
+  (`memory`, `transcript`) stay available as explicit choices.
+- **`tape restore --strategy native`** to an agent whose schema is
+  no longer compatible (e.g. cursor `store.db` bumped its layout)
+  now returns `ports.ErrNativeUnsupported` from the writer and
+  *falls back to memory* instead of erroring out. The fallback is
+  announced on stderr so the user knows to `tape update`.
+- **Cross-machine cwd**: when `sess.CWD` doesn't exist on the local
+  box during restore, tape auto-rewrites it to the current `pwd`
+  before calling the native writer (per-restore; the archive copy
+  keeps the original cwd as historical record).
+- **`tape restore --json`** now includes a `target_file` field so
+  agent scripts can find the file the writer materialized without
+  parsing free-text output.
+
+### Internal
+
+- `ports.SessionWriter.Write` returns `ports.WriteResult{
+  ResumeCommand, TargetFile}` instead of `(string, error)`, letting
+  the caller render both human and JSON output without duplicating
+  format strings.
+- `ports.ErrNativeUnsupported` sentinel for writers that detect
+  schema or environment mismatches and want callers to fall back
+  gracefully.
+- `ports.ExportOpts.ExtraFiles` lets the export writer accept
+  synthetic files (used by the bundle manifest); the snapshot writer
+  now emits them after the regular tree, in both zip and tar paths.
+- `internal/export/bundle` package: pure data + JSON IO, no
+  archive coupling. `Read` validates schema versions monotonically;
+  unknown future versions are rejected (not silently skipped) so we
+  never lose fields.
+
 ## [0.2.0] — 2026-06-15
 
 Focused follow-up to v0.1.0: fixes the SQL crash hit by users who

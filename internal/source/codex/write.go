@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"github.com/chenhg5/tape/internal/core/model"
+	"github.com/chenhg5/tape/internal/core/ports"
 	"github.com/chenhg5/tape/internal/source/internal/scan"
 )
 
 // Write materializes a session in Codex's rollout format so it can be
 // resumed with `codex resume`. Text dialogue only, best-effort (see the
 // claude-code writer for rationale). Implements ports.SessionWriter.
-func (s *Source) Write(ctx context.Context, sess *model.Session) (string, error) {
+func (s *Source) Write(ctx context.Context, sess *model.Session) (ports.WriteResult, error) {
 	cwd := sess.CWD
 	if cwd == "" {
 		cwd, _ = os.Getwd()
@@ -25,7 +26,7 @@ func (s *Source) Write(ctx context.Context, sess *model.Session) (string, error)
 	now := time.Now().UTC()
 	dir := filepath.Join(s.dir, now.Format("2006"), now.Format("01"), now.Format("02"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+		return ports.WriteResult{}, err
 	}
 	path := filepath.Join(dir, fmt.Sprintf("rollout-%s-%s.jsonl", now.Format("2006-01-02T15-04-05"), id))
 
@@ -59,13 +60,16 @@ func (s *Source) Write(ctx context.Context, sess *model.Session) (string, error)
 			},
 		}
 		if err := enc.Encode(line); err != nil {
-			return "", err
+			return ports.WriteResult{}, err
 		}
 	}
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
-		return "", err
+		return ports.WriteResult{}, err
 	}
-	return fmt.Sprintf("cd %s && codex resume %s", cwd, id), nil
+	return ports.WriteResult{
+		ResumeCommand: fmt.Sprintf("cd %s && codex resume %s", cwd, id),
+		TargetFile:    path,
+	}, nil
 }
 
 // sessionMetaPayload builds the session_meta payload. Codex deserializes it

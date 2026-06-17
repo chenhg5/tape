@@ -138,6 +138,7 @@ func Write(ctx context.Context, archive ports.Archive, opts ports.ExportOpts) (*
 	}); err != nil {
 		return nil, err
 	}
+	total += int64(len(opts.ExtraFiles))
 
 	res := &ports.ExportResult{Format: format, Changed: int(total)}
 	if opts.DryRun {
@@ -178,23 +179,38 @@ func writeArchive(ctx context.Context, out io.Writer, format, compress string,
 
 	if format == FormatZip {
 		zw := zip.NewWriter(out)
-		count, err := pipeFiles(opts, keep, total, func(rel string, data []byte, info os.FileInfo) error {
-			fh, err := zip.FileInfoHeader(info)
-			if err != nil {
-				return err
-			}
-			fh.Name = rel
-			fh.Method = zip.Deflate
+		addZip := func(rel string, data []byte, mod time.Time) error {
+			fh := &zip.FileHeader{Name: rel, Method: zip.Deflate, Modified: mod}
 			w, err := zw.CreateHeader(fh)
 			if err != nil {
 				return err
 			}
 			_, err = w.Write(data)
 			return err
+		}
+		count, err := pipeFiles(opts, keep, total, func(rel string, data []byte, info os.FileInfo) error {
+			return addZip(rel, data, info.ModTime())
 		})
 		if err != nil {
 			zw.Close()
 			return count, err
+		}
+		// Inject synthetic files (manifest) after archive entries so
+		// the bundle reflects exactly what shipped.
+		now := time.Now()
+		for _, e := range opts.ExtraFiles {
+			mod := e.ModTime
+			if mod.IsZero() {
+				mod = now
+			}
+			if err := addZip(e.RelPath, e.Data, mod); err != nil {
+				zw.Close()
+				return count, err
+			}
+			count++
+			if opts.OnProgress != nil {
+				opts.OnProgress(int64(count), total, e.RelPath)
+			}
 		}
 		return count, zw.Close()
 	}
@@ -234,23 +250,42 @@ func writeArchive(ctx context.Context, out io.Writer, format, compress string,
 		compressed = nopCloser{out}
 	}
 	tw := tar.NewWriter(compressed)
-	count, err := pipeFiles(opts, keep, total, func(rel string, data []byte, info os.FileInfo) error {
+	addTar := func(rel string, data []byte, mod time.Time) error {
 		hdr := &tar.Header{
 			Name:    rel,
 			Mode:    0o600,
 			Size:    int64(len(data)),
-			ModTime: info.ModTime(),
+			ModTime: mod,
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
 		_, err := tw.Write(data)
 		return err
+	}
+	count, err := pipeFiles(opts, keep, total, func(rel string, data []byte, info os.FileInfo) error {
+		return addTar(rel, data, info.ModTime())
 	})
 	if err != nil {
 		tw.Close()
 		compressed.Close()
 		return count, err
+	}
+	now := time.Now()
+	for _, e := range opts.ExtraFiles {
+		mod := e.ModTime
+		if mod.IsZero() {
+			mod = now
+		}
+		if err := addTar(e.RelPath, e.Data, mod); err != nil {
+			tw.Close()
+			compressed.Close()
+			return count, err
+		}
+		count++
+		if opts.OnProgress != nil {
+			opts.OnProgress(int64(count), total, e.RelPath)
+		}
 	}
 	if err := tw.Close(); err != nil {
 		return count, err

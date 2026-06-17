@@ -22,12 +22,15 @@ func TestWriteReadBack(t *testing.T) {
 			{Role: model.RoleTool, Text: "tool noise must be skipped"},
 		},
 	}
-	resumeCmd, err := s.Write(ctx, in)
+	res, err := s.Write(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(resumeCmd, "claude --resume ") {
-		t.Errorf("resume cmd = %q", resumeCmd)
+	if !strings.Contains(res.ResumeCommand, "claude --resume ") {
+		t.Errorf("resume cmd = %q", res.ResumeCommand)
+	}
+	if res.TargetFile == "" {
+		t.Error("WriteResult.TargetFile should be set")
 	}
 	refs, err := s.List(ctx, time.Time{})
 	if err != nil || len(refs) != 1 {
