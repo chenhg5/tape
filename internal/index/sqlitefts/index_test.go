@@ -460,7 +460,12 @@ func TestMakeSnippet(t *testing.T) {
 	if !strings.Contains(snip, "目标词组") {
 		t.Errorf("snippet lost the match: %q", snip)
 	}
-	if len(snip) > 300 {
+	// Window is 500 chars but CJK runes are multi-byte; allow 600
+	// bytes of slack so the assertion stays correct without
+	// hard-coding the byte cost per rune. The renderer truncates
+	// again for display, this just guards "we don't return the whole
+	// message body verbatim".
+	if len(snip) > 600 {
 		t.Errorf("snippet too long: %d bytes", len(snip))
 	}
 	if !utf8.ValidString(snip) {

@@ -132,7 +132,16 @@ func remoteScript(newer string) string {
 }
 
 func (m *Mirror) pullTar(ctx context.Context, newer string) error {
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", m.Host, remoteScript(newer))
+	// Wrap in `sh -c '...'` instead of letting the user's login shell
+	// interpret the script. macOS users (default shell zsh since
+	// Catalina) used to hit `tar: " .claude/projects .cursor/chats":
+	// Cannot stat: No such file or directory` because zsh — unlike
+	// POSIX sh — does NOT word-split unquoted variables by default, so
+	// our `tar -cf - $dirs` line received one literal argument instead
+	// of N. Forcing /bin/sh guarantees POSIX splitting regardless of
+	// the remote user's login shell.
+	wrapped := "sh -c " + shellQuote(remoteScript(newer))
+	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", m.Host, wrapped)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -148,6 +157,16 @@ func (m *Mirror) pullTar(ctx context.Context, newer string) error {
 		return fmt.Errorf("ssh %s: %w: %s", m.Host, waitErr, firstLine(errBuf.String()))
 	}
 	return extractErr
+}
+
+// shellQuote wraps s in single quotes for safe `sh -c` interpolation,
+// escaping any embedded single quote with the standard '\'' dance.
+// remoteScript's output never contains single quotes today (all its
+// embedded paths come from AgentDirs, which are static literals), but
+// keeping the quoting honest means the next person who adds a path
+// with an apostrophe doesn't silently break ssh.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // extract unpacks the tar stream under root, refusing entries that escape it.

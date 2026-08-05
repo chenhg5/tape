@@ -387,8 +387,14 @@ func indexableText(m model.Message) string {
 // makeSnippet cuts a window of the original text around the first query
 // term occurrence. We do our own snippeting because FTS5's snippet() would
 // return the bigram-tokenized shadow column, which is unreadable.
+//
+// The window is intentionally generous (500 chars vs FTS5's stock 64-token
+// default). The renderer truncates again to fit the terminal, but the index
+// has to carry enough context that --expand / -C are useful without going
+// back to the archive. Storage cost is negligible — snippets live in
+// memory, not on disk.
 func makeSnippet(text, query string) string {
-	const window = 240
+	const window = 500
 	text = strings.Join(strings.Fields(text), " ") // collapse whitespace
 	lower := strings.ToLower(text)
 

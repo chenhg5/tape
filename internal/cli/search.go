@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/chenhg5/tape/internal/agentid"
+	"github.com/chenhg5/tape/internal/core/model"
 	"github.com/chenhg5/tape/internal/core/ports"
 )
 
@@ -17,11 +18,38 @@ import (
 // is still in --json output.
 const hitsPerSession = 3
 
+// renderOpts collects the display knobs for renderHits. Kept as a struct
+// so the (currently small) call sites in command + interactive picker
+// don't drift apart when we add the next flag.
+type renderOpts struct {
+	// snippetWidth is the maximum display width for a single-line
+	// snippet. Computed from the terminal width by default. Ignored
+	// when expand is true (multi-line wrap follows terminal width
+	// directly).
+	snippetWidth int
+	// expand turns the single-line snippet into a soft-wrapped
+	// paragraph that respects the full window. Use when the user
+	// asks for "show me what this match actually said", not just
+	// the headline.
+	expand bool
+	// context is the grep -C N value: print N turns of conversation
+	// before and after each matching turn, in dim color. 0 disables.
+	context int
+	// archive lets the renderer pull full message bodies for
+	// context lines; nil means context==0 effectively.
+	archive interface {
+		Get(context.Context, string) (*model.Session, error)
+	}
+	ctx context.Context
+}
+
 // renderHits prints search results grouped by session. Layout:
 //
 //	▸ <session-id>  <agent>  <relative-time>  ·  <title>
 //	    <role>  <snippet with query highlighted>
+//	      [-C N: prev N turns, dim]
 //	    <role>  <snippet with query highlighted>
+//	      [-C N: next N turns, dim]
 //	    <gray>  + N more in this session
 //
 //	▸ <next session>
@@ -29,8 +57,24 @@ const hitsPerSession = 3
 //
 // Sessions appear in the order the index returned them (newest-first by
 // default, BM25 when --sort relevance is set).
-func renderHits(app *App, hits []ports.Hit, query string, page int, hasMore bool) {
+func renderHits(app *App, hits []ports.Hit, query string, page int, hasMore bool, opts renderOpts) {
 	app.lead()
+	if opts.snippetWidth <= 0 {
+		// Terminal width minus role column (9) + indent (4) + a
+		// safety margin so wrapped CJK doesn't push the column off
+		// the right edge. Floor at 100 so the contract on narrow
+		// terminals doesn't regress below the previous hardcoded
+		// width, ceiling at 200 to keep ultra-wide monitors from
+		// generating un-scannable wall-of-text rows.
+		w := termCols(140) - 14
+		switch {
+		case w < 100:
+			w = 100
+		case w > 200:
+			w = 200
+		}
+		opts.snippetWidth = w
+	}
 	type group struct {
 		hits []ports.Hit
 	}
@@ -69,14 +113,47 @@ func renderHits(app *App, hits []ports.Hit, query string, page int, hasMore bool
 		}
 		fmt.Println(header)
 
+		// Resolve full session ONCE per group if any of the
+		// context-aware features is on — both -C and --expand need
+		// the original messages, and re-Getting per hit would re-
+		// read session.json N times for no benefit.
+		var sess *model.Session
+		if (opts.context > 0 || opts.expand) && opts.archive != nil {
+			sess, _ = opts.archive.Get(opts.ctx, id)
+		}
+
 		shown := g.hits
 		if len(shown) > hitsPerSession {
 			shown = shown[:hitsPerSession]
 		}
-		for _, hh := range shown {
-			fmt.Printf("    %s  %s\n",
-				app.cyan(padRightDisp(hh.Role, 9)),
-				highlightSnippet(app, hh.Snippet, query, 100))
+		for hi, hh := range shown {
+			// -C N: pre-context (older turns)
+			if opts.context > 0 && sess != nil {
+				printContextWindow(app, sess, hh.MessageID,
+					-opts.context, -1)
+			}
+			// The hit line itself: either single-line (default)
+			// or wrapped multi-line (--expand). The yellow
+			// highlight per query term is preserved in both.
+			role := app.cyan(padRightDisp(hh.Role, 9))
+			body := pickHitBody(sess, hh)
+			if opts.expand {
+				printExpandedHit(app, role, body, query, opts.snippetWidth)
+			} else {
+				fmt.Printf("    %s  %s\n",
+					role,
+					highlightSnippet(app, body, query, opts.snippetWidth))
+			}
+			// -C N: post-context (newer turns)
+			if opts.context > 0 && sess != nil {
+				printContextWindow(app, sess, hh.MessageID,
+					1, opts.context)
+			}
+			// Separator between hits within the same session
+			// when context is on, otherwise hits stack tightly.
+			if opts.context > 0 && hi < len(shown)-1 {
+				fmt.Println()
+			}
 		}
 		if extra := len(g.hits) - len(shown); extra > 0 {
 			fmt.Printf("    %s\n",
@@ -101,6 +178,190 @@ func renderHits(app *App, hits []ports.Hit, query string, page int, hasMore bool
 		footer += fmt.Sprintf("  ·  --page %d for more", page+1)
 	}
 	fmt.Printf("\n%s\n", app.gray(footer+".  tape show <id> to replay."))
+}
+
+// pickHitBody returns the text we should render for this hit. When the
+// archive lookup succeeded we prefer the full message body (because
+// --expand needs more than the index snippet has) and fall back to the
+// index-side snippet otherwise. Picking is per-hit, so a session whose
+// .Get failed still gets reasonable single-line output for every hit.
+func pickHitBody(sess *model.Session, h ports.Hit) string {
+	if sess == nil || h.MessageID == "" {
+		return h.Snippet
+	}
+	for _, m := range sess.Messages {
+		if m.ID == h.MessageID {
+			if m.Text != "" {
+				return m.Text
+			}
+		}
+	}
+	return h.Snippet
+}
+
+// printExpandedHit renders one hit as a soft-wrapped paragraph. We wrap
+// at snippetWidth and indent continuation lines so the role column stays
+// readable. Highlighting is applied AFTER wrapping so terms split across
+// a wrap boundary still bold; the trade-off is that we wrap on display
+// width but highlight by string content — for our terms (CJK, prefix
+// matches) the visual difference is negligible.
+func printExpandedHit(app *App, role, body, query string, width int) {
+	body = collapseWhitespace(body)
+	// Reserve the role + indent budget so wrapped continuation lines
+	// align under the snippet, not the role column.
+	const rolePrefix = "    "
+	const contIndent = "              " // 4 spaces indent + 9 role width + 2 spaces
+	lines := wrapDisplayWidth(body, width)
+	for i, line := range lines {
+		highlighted := highlightTerms(app, line, query)
+		if i == 0 {
+			fmt.Printf("%s%s  %s\n", rolePrefix, role, highlighted)
+		} else {
+			fmt.Printf("%s%s\n", contIndent, highlighted)
+		}
+	}
+}
+
+// printContextWindow prints a slice of session messages relative to the
+// hit's MessageID position: offsetFrom..offsetTo (inclusive, signed —
+// negative is "before", positive is "after"). Lines are dim, prefixed
+// with a relative marker like "↑2" / "↓1" so the user can navigate to
+// the right place in `tape show`. The hit line itself (offset==0) is
+// never printed here; renderHits owns it.
+func printContextWindow(app *App, sess *model.Session, hitMsgID string, offsetFrom, offsetTo int) {
+	idx := -1
+	for i, m := range sess.Messages {
+		if m.ID == hitMsgID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return
+	}
+	width := termCols(140) - 18
+	if width < 60 {
+		width = 60
+	}
+	if width > 200 {
+		width = 200
+	}
+	for off := offsetFrom; off <= offsetTo; off++ {
+		if off == 0 {
+			continue
+		}
+		i := idx + off
+		if i < 0 || i >= len(sess.Messages) {
+			continue
+		}
+		m := sess.Messages[i]
+		marker := "↑"
+		if off > 0 {
+			marker = "↓"
+		}
+		marker = fmt.Sprintf("%s%d", marker, abs(off))
+		text := collapseWhitespace(m.Text)
+		if text == "" && len(m.ToolCalls) > 0 {
+			text = fmt.Sprintf("(tool call: %s)", m.ToolCalls[0].Name)
+		}
+		// Truncate context lines tighter than hit lines so the eye
+		// still gravitates to the match. -C is for orientation, not
+		// reading every adjacent turn end-to-end.
+		text = truncDisp(text, width)
+		fmt.Printf("        %s %s  %s\n",
+			app.gray(marker),
+			app.dim(padRightDisp(string(m.Role), 9)),
+			app.dim(text))
+	}
+}
+
+// printContextWindow needs a small ints helper without pulling in math.
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// highlightTerms is the multi-term wrapper around caseInsensitiveReplace
+// used by both single-line and wrapped renderers; keeping the loop in
+// one place means a future "max highlights per line" cap lands in one
+// spot.
+func highlightTerms(app *App, s, query string) string {
+	for _, t := range queryTerms(query) {
+		if t == "" {
+			continue
+		}
+		s = caseInsensitiveReplace(s, t, app.yellow(t))
+	}
+	return s
+}
+
+// wrapDisplayWidth breaks s into lines of at most width display cells.
+// Honors CJK character widths via display-width-aware iteration. Breaks
+// on existing whitespace when possible; falls back to hard breaks for
+// long runs of CJK or unbroken latin (e.g. URLs).
+func wrapDisplayWidth(s string, width int) []string {
+	if width <= 0 {
+		return []string{s}
+	}
+	var lines []string
+	runes := []rune(s)
+	var line []rune
+	lineW := 0
+	lastBreak := -1
+	for _, r := range runes {
+		rw := runeDisplayWidth(r)
+		if lineW+rw > width {
+			// prefer break at last whitespace
+			if lastBreak >= 0 && lastBreak < len(line) {
+				lines = append(lines, strings.TrimRight(string(line[:lastBreak]), " "))
+				rest := line[lastBreak:]
+				line = append([]rune{}, rest...)
+				// recompute lineW
+				lineW = 0
+				for _, rr := range line {
+					lineW += runeDisplayWidth(rr)
+				}
+				lastBreak = -1
+			} else {
+				lines = append(lines, string(line))
+				line = line[:0]
+				lineW = 0
+			}
+		}
+		line = append(line, r)
+		lineW += rw
+		if r == ' ' {
+			lastBreak = len(line)
+		}
+	}
+	if len(line) > 0 {
+		lines = append(lines, strings.TrimRight(string(line), " "))
+	}
+	return lines
+}
+
+// runeDisplayWidth returns 2 for east-asian wide chars, 1 otherwise.
+// Approximation good enough for snippet wrapping; not aiming for full
+// Unicode UAX#11 fidelity.
+func runeDisplayWidth(r rune) int {
+	switch {
+	case r < 0x20 || r == 0x7f:
+		return 0
+	case r >= 0x1100 && r <= 0x115F, // Hangul Jamo
+		r >= 0x2E80 && r <= 0x9FFF,  // CJK
+		r >= 0xA000 && r <= 0xA4CF,  // Yi
+		r >= 0xAC00 && r <= 0xD7A3,  // Hangul syllables
+		r >= 0xF900 && r <= 0xFAFF,  // CJK Compatibility
+		r >= 0xFE30 && r <= 0xFE4F,  // CJK Compatibility forms
+		r >= 0xFF00 && r <= 0xFF60,  // Fullwidth
+		r >= 0xFFE0 && r <= 0xFFE6,  // Fullwidth signs
+		r >= 0x20000 && r <= 0x2FFFD,
+		r >= 0x30000 && r <= 0x3FFFD:
+		return 2
+	}
+	return 1
 }
 
 // highlightSnippet collapses whitespace, truncates around the query match
@@ -164,8 +425,8 @@ func caseInsensitiveReplace(s, old, replacement string) string {
 func newSearchCmd(app *App) *cobra.Command {
 	var agent, dir, since, sort, host string
 	var excludeAgent, excludeDir, excludeHost []string
-	var limit, page int
-	var printOnly bool
+	var limit, page, ctxLines int
+	var printOnly, expand bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Full-text search across all archived sessions",
@@ -178,13 +439,25 @@ picker: ↑/↓ to browse, Enter to act on a session (Resume here / Show /
 Copy ID / Copy resume command). Pass --print for the legacy grouped
 list output, or --json / pipe for the machine contract.
 
+For more context per hit:
+  --expand / -E       wrap the snippet across multiple lines instead of
+                      truncating to one; you see the full message body
+                      (still highlighted) without diving into 'tape show'.
+  --context N / -C N  grep-style: print N user/assistant turns before
+                      and after each matching turn, dim-coloured, with
+                      ↑/↓N relative-position markers. Useful when one
+                      turn alone doesn't tell you whether this is the
+                      conversation you wanted.
+
 Results are ordered newest-session-first (--sort recent, default) because
 the most useful match is usually "the conversation I just had". Switch to
 --sort relevance for classic BM25 ranking when you are mining old archives.`,
-		Example: `  tape search "auth migration"            # interactive picker on a TTY
+		Example: `  tape search "auth migration"             # interactive picker on a TTY
+  tape search "auth" --print               # grouped list, single-line snippet
+  tape search "auth" --print --expand      # multi-line wrap, full body
+  tape search "auth" --print -C 2          # grep-style: 2 turns of context each side
   tape search codex --agent cursor
-  tape search "memory leak" --sort relevance --limit 50
-  tape search "auth" --print               # legacy grouped list`,
+  tape search "memory leak" --sort relevance --limit 50`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return usageErrf("missing search query. try:\n" +
@@ -216,6 +489,9 @@ the most useful match is usually "the conversation I just had". Switch to
 			case "", "recent", "relevance":
 			default:
 				return usageErrf("--sort must be 'recent' or 'relevance'")
+			}
+			if ctxLines < 0 {
+				return usageErrf("--context must be >= 0")
 			}
 			dir = resolveDirFilter(dir)
 			excludedAgents, err := resolveExcludeAgents(mergeExcludeAgents(app, excludeAgent))
@@ -271,7 +547,12 @@ the most useful match is usually "the conversation I just had". Switch to
 			if !printOnly && app.interactive() && !cmd.Flag("page").Changed {
 				return runInteractiveSearch(cmd.Context(), app, query, hits)
 			}
-			renderHits(app, hits, query, page, hasMore)
+			renderHits(app, hits, query, page, hasMore, renderOpts{
+				expand:  expand,
+				context: ctxLines,
+				archive: app.Archive(),
+				ctx:     cmd.Context(),
+			})
 			return nil
 		},
 	}
@@ -286,6 +567,8 @@ the most useful match is usually "the conversation I just had". Switch to
 	cmd.Flags().IntVar(&limit, "limit", 20, "page size")
 	cmd.Flags().IntVar(&page, "page", 1, "page number (1-based)")
 	cmd.Flags().BoolVar(&printOnly, "print", false, "skip the interactive picker, just print the grouped hit list")
+	cmd.Flags().BoolVarP(&expand, "expand", "E", false, "wrap each hit across multiple lines instead of truncating to one (shows the full message body)")
+	cmd.Flags().IntVarP(&ctxLines, "context", "C", 0, "grep-style: print N turns before AND after each matching turn, dim-coloured")
 	return cmd
 }
 

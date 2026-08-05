@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -75,7 +76,7 @@ func TestRenderHitsBasic(t *testing.T) {
 		{SessionID: "cursor/abcd1234-bbbb", Agent: "cursor", Project: "p",
 			Title: "Doc advisor", Role: "tool", Snippet: "备份 方案"},
 	}
-	out := captureStdout(t, func() { renderHits(app, hits, "备份", 1, false) })
+	out := captureStdout(t, func() { renderHits(app, hits, "备份", 1, false, renderOpts{}) })
 
 	// the two codex hits share a single header row. shortID renders
 	// long sourceIDs as "head6 + … + tail4" so we look for the abbrev.
@@ -100,12 +101,111 @@ func TestRenderHitsCollapsesWhitespace(t *testing.T) {
 		{SessionID: "codex/x", Agent: "codex", Role: "user",
 			Snippet: "line1\n\n\tline2     line3"},
 	}
-	out := captureStdout(t, func() { renderHits(app, hits, "", 1, false) })
+	out := captureStdout(t, func() { renderHits(app, hits, "", 1, false, renderOpts{}) })
 	if strings.Contains(out, "\n\n\t") || strings.Contains(out, "line2     ") {
 		t.Errorf("whitespace not collapsed:\n%s", out)
 	}
 	if !strings.Contains(out, "line1 line2 line3") {
 		t.Errorf("expected one-line snippet:\n%s", out)
+	}
+}
+
+// TestRenderHitsExpandWrapsLongBodies pins the --expand contract: a
+// long single-message body is split into multiple wrapped lines, each
+// prefixed by the continuation indent (so visual alignment under the
+// role column survives), and the query term still gets highlighted on
+// the line it actually appears.
+func TestRenderHitsExpandWrapsLongBodies(t *testing.T) {
+	app := plainApp()
+	long := strings.Repeat("alpha beta gamma delta ", 12) + "redis " + strings.Repeat("zeta eta theta ", 12)
+	hits := []ports.Hit{{
+		SessionID: "codex/abc", Agent: "codex",
+		MessageID: "m1", Role: "user", Snippet: long,
+	}}
+	out := captureStdout(t, func() {
+		renderHits(app, hits, "redis", 1, false, renderOpts{
+			snippetWidth: 60, // small, force multiple wraps
+			expand:       true,
+		})
+	})
+	bodyLines := 0
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, "alpha") || strings.Contains(ln, "redis") || strings.Contains(ln, "zeta") {
+			bodyLines++
+		}
+	}
+	if bodyLines < 3 {
+		t.Fatalf("expected >=3 wrapped body lines, got %d:\n%s", bodyLines, out)
+	}
+}
+
+// TestRenderHitsContextShowsAdjacentTurns drives the -C N path with a
+// hand-built session and verifies pre/post markers (↑1, ↓1) plus the
+// dimmed role labels appear, while the hit message itself is NOT
+// duplicated in the context window.
+func TestRenderHitsContextShowsAdjacentTurns(t *testing.T) {
+	app := plainApp()
+	sess := &model.Session{
+		ID: "codex/ctx", Agent: "codex",
+		Messages: []model.Message{
+			{ID: "m0", Role: "user", Text: "earlier user question"},
+			{ID: "m1", Role: "assistant", Text: "matching redis answer"},
+			{ID: "m2", Role: "user", Text: "follow-up question"},
+		},
+	}
+	hits := []ports.Hit{{
+		SessionID: "codex/ctx", Agent: "codex",
+		MessageID: "m1", Role: "assistant",
+		Snippet: "matching redis answer",
+	}}
+	out := captureStdout(t, func() {
+		renderHits(app, hits, "redis", 1, false, renderOpts{
+			context: 1,
+			archive: stubGet(sess),
+		})
+	})
+	if !strings.Contains(out, "↑1") || !strings.Contains(out, "↓1") {
+		t.Errorf("missing context markers:\n%s", out)
+	}
+	if !strings.Contains(out, "earlier user question") {
+		t.Errorf("pre-context missing:\n%s", out)
+	}
+	if !strings.Contains(out, "follow-up question") {
+		t.Errorf("post-context missing:\n%s", out)
+	}
+	// hit line must appear exactly once; context window skips offset 0
+	if strings.Count(out, "matching redis answer") != 1 {
+		t.Errorf("hit line should appear once, got:\n%s", out)
+	}
+}
+
+// stubGet is a tiny in-memory archive that returns a fixed session
+// regardless of id. Lets renderHits exercise its "fetch full session
+// for context/expand" branch without spinning up the real local
+// archive on disk.
+type stubArchive struct{ s *model.Session }
+
+func stubGet(s *model.Session) stubArchive { return stubArchive{s: s} }
+func (a stubArchive) Get(_ context.Context, _ string) (*model.Session, error) {
+	return a.s, nil
+}
+
+// TestWrapDisplayWidthCJK ensures CJK runes (2 cells each) are counted
+// correctly when wrapping; a naive byte-or-rune count would let a line
+// overflow by a column.
+func TestWrapDisplayWidthCJK(t *testing.T) {
+	got := wrapDisplayWidth("你好世界你好世界你好世界", 8)
+	if len(got) < 2 {
+		t.Fatalf("expected multiple lines, got %v", got)
+	}
+	for _, line := range got {
+		width := 0
+		for _, r := range line {
+			width += runeDisplayWidth(r)
+		}
+		if width > 8 {
+			t.Errorf("line %q exceeds width 8 (got %d)", line, width)
+		}
 	}
 }
 

@@ -16,6 +16,25 @@ import (
 func stdoutIsTTY() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 func stdinIsTTY() bool  { return term.IsTerminal(int(os.Stdin.Fd())) }
 
+// termCols reports the current stdout terminal width in columns, falling
+// back to fallback when the size can't be determined (non-TTY, dumb
+// terminal, or when running under a harness that swallows TIOCGWINSZ).
+// We honor a COLUMNS env override so users running in TUIs that don't
+// forward ioctl-based sizing still get a sane wrap target — and so the
+// test suite can pin a deterministic width.
+func termCols(fallback int) int {
+	if v := os.Getenv("COLUMNS"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			return n
+		}
+	}
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		return w
+	}
+	return fallback
+}
+
 func (a *App) useJSON() bool { return a.jsonOut || !stdoutIsTTY() }
 
 // interactive reports whether we can safely ask the user a question:
